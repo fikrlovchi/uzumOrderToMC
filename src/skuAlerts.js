@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const logger = require("./logger");
 
 const DATA_DIR = path.join(__dirname, "..", "data");
 const STATE_FILE = path.join(DATA_DIR, "notified-skus.json");
@@ -19,16 +20,19 @@ function saveState(state) {
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 }
 
+// Muvaffaqiyat/muvaffaqiyatsizlikni qaytaradi (throw qilmaydi) — chaqiruvchi
+// muvaffaqiyatsiz urinishni "notified" deb belgilamasligi kerak, aks holda
+// vaqtinchalik tarmoq xatosi 24 soatga SKU'ni butunlay soqov qilib qo'yadi.
 async function sendTelegramMessage(text) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
   const topicId = process.env.TELEGRAM_TOPIC_ID;
-  if (!token || !chatId) return;
+  if (!token || !chatId) return false;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -38,8 +42,14 @@ async function sendTelegramMessage(text) {
       }),
       signal: controller.signal,
     });
-  } catch {
-    // Telegram'ga yetkazib bo'lmadi — asosiy jarayon uchun ahamiyatsiz
+    if (!response.ok) {
+      logger.error(`Telegram xabar yuborilmadi (${response.status}): ${await response.text()}`);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    logger.error(`Telegram'ga ulanib bo'lmadi: ${e.message}`);
+    return false;
   } finally {
     clearTimeout(timeout);
   }
@@ -54,13 +64,13 @@ async function notifyIfNew(sku) {
     const lastNotifiedAt = state[sku];
     if (lastNotifiedAt && Date.now() - lastNotifiedAt < COOLDOWN_MS) return;
 
-    await sendTelegramMessage(sku);
+    const sent = await sendTelegramMessage(sku);
+    if (!sent) return; // muvaffaqiyatsiz bo'lsa, keyingi tsiklda qayta sinaladi
 
     state[sku] = Date.now();
     saveState(state);
-  } catch {
-    // fayl/tarmoq xatosi SKU ogohlantirishni to'xtatishi mumkin, lekin
-    // buyurtma sinxronizatsiyasini to'xtatmasligi kerak
+  } catch (e) {
+    logger.error(`SKU ogohlantirish xatosi (${sku}): ${e.message}`);
   }
 }
 
