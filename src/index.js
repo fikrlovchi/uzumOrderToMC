@@ -6,6 +6,7 @@ const config = require("../config.json");
 const { colLetterToIndex, formatDateTimeGMT5 } = require("./sheetsUtil");
 const logger = require("./logger");
 const reporter = require("./reporter");
+const skuAlerts = require("./skuAlerts");
 
 const ORD = Object.fromEntries(
   Object.entries(config.columns.orders).map(([k, v]) => [k, colLetterToIndex(v)])
@@ -35,6 +36,13 @@ function isUsableRef(raw) {
   return true;
 }
 
+// XLOOKUP xato matnidan qidirilgan SKU'ni ajratib oladi, masalan:
+// "#N/A (Did not find value 'LIVANA-RS03020120107-ЧЕРН' in XLOOKUP evaluation.)"
+function extractSku(rawValue) {
+  const match = rawValue.match(/Did not find value '([^']+)'/);
+  return match ? match[1] : rawValue;
+}
+
 function buildPositions(details, orderId) {
   const positions = [];
   for (let j = 1; j < details.length; j++) {
@@ -42,7 +50,10 @@ function buildPositions(details, orderId) {
     if (cell(row[DET.orderId]).toString().trim() !== orderId.toString().trim()) continue;
 
     if (!isUsableRef(row[DET.product])) {
-      throw new Error(`mahsulot ID/link topilmadi (detail qator ${j + 1}): "${cell(row[DET.product])}"`);
+      const raw = cell(row[DET.product]).toString();
+      const err = new Error(`mahsulot ID/link topilmadi (detail qator ${j + 1}): "${raw}"`);
+      err.sku = extractSku(raw);
+      throw err;
     }
 
     let entityType = cell(row[DET.entityType]).toString().trim().toLowerCase() || "product";
@@ -153,6 +164,7 @@ async function createMoySkladOrders() {
     } catch (e) {
       logger.error(`Order ${orderId} o'tkazib yuborildi: ${e.message}`);
       errorCount++;
+      if (e.sku) await skuAlerts.notifyIfNew(e.sku);
       continue;
     }
     if (positions.length === 0) {

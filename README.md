@@ -30,6 +30,21 @@ cp .env.example .env
 `.env` ichida `PANEL_API_KEY`ni to'ldiring — kalit `fikrlovchi-panel` serverida
 `node scripts/seed-project.js uzum-order-to-mc "Uzum -> MoySklad"` orqali olinadi.
 
+## Telegram SKU ogohlantirish
+
+MoySklad'da mosi topilmagan SKU (XLOOKUP `#N/A`) tufayli buyurtma o'tkazib
+yuborilsa, shu SKU haqida Telegram guruhning belgilangan mavzusiga (topic)
+xabar boradi. Bir xil SKU 24 soat ichida qayta yuborilmaydi (`data/notified-skus.json`
+orqali kuzatiladi, git'ga tushmaydi).
+
+`.env` ga qo'shing:
+```
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_CHAT_ID=...
+TELEGRAM_TOPIC_ID=...
+```
+Sozlanmagan bo'lsa (bo'sh qoldirilsa), bu funksiya jim o'tkazib yuboriladi.
+
 Panel bilan bog'liq muammo (masalan, u vaqtincha ishlamasa) buyurtma
 sinxronizatsiyasiga ta'sir qilmaydi — hisobot yuborish "fire-and-forget"
 tarzida ishlaydi va barcha xatolarni yutadi.
