@@ -1,10 +1,10 @@
 [Unit]
-Description=Uzum -> MoySklad sinxronizatsiyasini har 5 daqiqada ishga tushiradi
+Description=Uzum -> MoySklad sinxronizatsiyasini har 2 daqiqada ishga tushiradi
 
 [Timer]
-# Serverdan 2 daqiqa o'tib birinchi marta ishga tushadi, keyin har 5 daqiqada.
-OnBootSec=2min
-OnUnitActiveSec=5min
+# Serverdan 1 daqiqa o'tib birinchi marta ishga tushadi, keyin har 2 daqiqada.
+OnBootSec=1min
+OnUnitActiveSec=2min
 # Agar oldingi ishga tushirish hali tugamagan bo'lsa, yangi nusxa boshlanmaydi
 # (systemd service allaqachon "active" bo'lsa timer uni qayta ishga tushirmaydi).
 AccuracySec=30s
