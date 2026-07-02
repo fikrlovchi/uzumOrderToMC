@@ -1,0 +1,3 @@
+# systemd unit fayllari Linux serverda LF bilan bo'lishi shart
+deploy/*.service text eol=lf
+deploy/*.timer   text eol=lf

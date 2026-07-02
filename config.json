@@ -1,0 +1,36 @@
+{
+  "spreadsheetId": "18j8NDVJl9ZD-wuwlP3T1A1-sVoJlW_doFrwQrf-AvsE",
+  "credentialsPath": "./credentials.json",
+  "sheets": {
+    "orders": "uzum_order",
+    "details": "uzum_order_detail",
+    "tokenCell": "mc_token!A2"
+  },
+  "columns": {
+    "orders": {
+      "orderId": "A",
+      "date": "E",
+      "shipmentAddress": "I",
+      "organization": "O",
+      "salesChannel": "P",
+      "status": "Q",
+      "trackingNumber": "R",
+      "moySkladId": "S"
+    },
+    "details": {
+      "price": "E",
+      "orderId": "H",
+      "product": "I",
+      "entityType": "J",
+      "quantity": "K"
+    }
+  },
+  "moysklad": {
+    "agentHref": "https://api.moysklad.ru/api/remap/1.2/entity/counterparty/043c4a47-ac53-11ed-0a80-01db000c6e32",
+    "storeHref": "https://api.moysklad.ru/api/remap/1.2/entity/store/a439adbf-97e3-11ed-0a80-0ca100976187",
+    "deliveryTypeAttr": "https://api.moysklad.ru/api/remap/1.2/entity/customerorder/metadata/attributes/3bd90888-8b34-11f0-0a80-056a001b9a27",
+    "deliveryValue": "https://api.moysklad.ru/api/remap/1.2/entity/customentity/07014f4b-8b34-11f0-0a80-003d001bf4c5/0a8dc706-2395-11f1-0a80-1ca0000f9429",
+    "orderNumAttr": "https://api.moysklad.ru/api/remap/1.2/entity/customerorder/metadata/attributes/6950c3db-986e-11f0-0a80-1bc2000dbbf9",
+    "trackingAttr": "https://api.moysklad.ru/api/remap/1.2/entity/customerorder/metadata/attributes/869bebdf-3701-11f1-0a80-1c8400281f99"
+  }
+}
