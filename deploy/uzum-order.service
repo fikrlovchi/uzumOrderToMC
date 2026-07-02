@@ -5,8 +5,6 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-# --- Quyidagilarni o'z serveringizga moslang ---
-User=uzum
-WorkingDirectory=/opt/uzumOrderToMC
-ExecStart=/usr/bin/node /opt/uzumOrderToMC/src/index.js
-# node yo'lini `which node` bilan aniqlang; nvm ishlatilsa to'liq yo'lni yozing.
+User=root
+WorkingDirectory=/root/uzumOrderToMC
+ExecStart=/usr/bin/node /root/uzumOrderToMC/src/index.js
