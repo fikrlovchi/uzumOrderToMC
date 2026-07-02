@@ -1,8 +1,11 @@
+require("dotenv").config();
+
 const path = require("path");
 const { google } = require("googleapis");
 const config = require("../config.json");
 const { colLetterToIndex, formatDateTimeGMT5 } = require("./sheetsUtil");
 const logger = require("./logger");
+const reporter = require("./reporter");
 
 const ORD = Object.fromEntries(
   Object.entries(config.columns.orders).map(([k, v]) => [k, colLetterToIndex(v)])
@@ -102,7 +105,17 @@ async function markRowSent(sheets, spreadsheetId, ordersSheetName, rowNumber, mo
   });
 }
 
+function deriveStatus(successCount, errorCount) {
+  if (errorCount === 0) return "success";
+  if (successCount === 0) return "error";
+  return "partial";
+}
+
 async function createMoySkladOrders() {
+  const startedAt = new Date().toISOString();
+  let successCount = 0;
+  let errorCount = 0;
+
   const auth = new google.auth.GoogleAuth({
     keyFile: path.join(__dirname, "..", config.credentialsPath),
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
@@ -139,6 +152,7 @@ async function createMoySkladOrders() {
       positions = buildPositions(details, orderId);
     } catch (e) {
       logger.error(`Order ${orderId} o'tkazib yuborildi: ${e.message}`);
+      errorCount++;
       continue;
     }
     if (positions.length === 0) {
@@ -163,18 +177,39 @@ async function createMoySkladOrders() {
         const moySkladId = JSON.parse(resText).id;
         await markRowSent(sheets, spreadsheetId, ordersSheetName, i + 1, moySkladId);
         logger.info(`Order ${orderId} muvaffaqiyatli yaratildi (${moySkladId}).`);
+        successCount++;
       } else {
         logger.error(`Order ${orderId} xatolik: ${resText}`);
+        errorCount++;
       }
     } catch (e) {
       logger.error(`Order ${orderId} texnik xato: ${e.message}`);
+      errorCount++;
     }
   }
+
+  return { startedAt, successCount, errorCount };
 }
 
 createMoySkladOrders()
-  .then(() => logger.info("Ish yakunlandi."))
-  .catch((e) => {
+  .then(async ({ startedAt, successCount, errorCount }) => {
+    logger.info("Ish yakunlandi.");
+    await reporter.reportRun({
+      startedAt,
+      status: deriveStatus(successCount, errorCount),
+      successCount,
+      errorCount,
+      summary: `${successCount} muvaffaqiyat, ${errorCount} xato`,
+    });
+  })
+  .catch(async (e) => {
     logger.error(`Umumiy xato: ${e.stack || e.message}`);
     process.exitCode = 1;
+    await reporter.reportRun({
+      startedAt: new Date().toISOString(),
+      status: "error",
+      successCount: 0,
+      errorCount: 1,
+      summary: e.message,
+    });
   });

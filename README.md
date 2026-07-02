@@ -17,6 +17,22 @@ sifatida yaratadi. Google Apps Script kodining Node.js versiyasi.
 |------|------|
 | `config.json` | Spreadsheet ID, varaq/ustun nomlari, MoySklad havolalari. Git'da bor. |
 | `credentials.json` | Google service account kaliti. **Git'ga tushmaydi** — qo'lda joylash kerak. |
+| `.env` | `fikrlovchi-panel` bilan bog'lanish uchun (ixtiyoriy). **Git'ga tushmaydi.** |
+
+## Admin panel (fikrlovchi-panel) bilan bog'lash
+
+Har bir ishga tushirish natijasi (log qatorlari, muvaffaqiyat/xato soni) `fikrlovchi-panel`ga
+yuboriladi — u orqali xatolarni ko'rish va trigger intervalni boshqarish mumkin.
+
+```bash
+cp .env.example .env
+```
+`.env` ichida `PANEL_API_KEY`ni to'ldiring — kalit `fikrlovchi-panel` serverida
+`node scripts/seed-project.js uzum-order-to-mc "Uzum -> MoySklad"` orqali olinadi.
+
+Panel bilan bog'liq muammo (masalan, u vaqtincha ishlamasa) buyurtma
+sinxronizatsiyasiga ta'sir qilmaydi — hisobot yuborish "fire-and-forget"
+tarzida ishlaydi va barcha xatolarni yutadi.
 
 ## Lokal ishga tushirish (Windows)
 
