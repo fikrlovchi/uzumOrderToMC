@@ -3,8 +3,7 @@
   "credentialsPath": "./credentials.json",
   "sheets": {
     "orders": "uzum_order",
-    "details": "uzum_order_detail",
-    "tokenCell": "mc_token!A2"
+    "details": "uzum_order_detail"
   },
   "columns": {
     "orders": {

@@ -136,19 +136,19 @@ async function createMoySkladOrders() {
   const ordersSheetName = config.sheets.orders;
   const detailsSheetName = config.sheets.details;
 
+  const token = process.env.MOYSKLAD_TOKEN;
+  if (!token) {
+    throw new Error("MOYSKLAD_TOKEN .env faylida topilmadi");
+  }
+
   const { data } = await sheets.spreadsheets.values.batchGet({
     spreadsheetId,
-    ranges: [ordersSheetName, detailsSheetName, config.sheets.tokenCell],
+    ranges: [ordersSheetName, detailsSheetName],
     valueRenderOption: "UNFORMATTED_VALUE",
   });
 
   const orders = data.valueRanges[0].values || [];
   const details = data.valueRanges[1].values || [];
-  const token = cell(data.valueRanges[2].values?.[0]?.[0]).toString().trim();
-
-  if (!token) {
-    throw new Error(`Token topilmadi (${config.sheets.tokenCell} bo'sh)`);
-  }
 
   for (let i = 1; i < orders.length; i++) {
     const order = orders[i];

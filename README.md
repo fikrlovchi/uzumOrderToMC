@@ -9,7 +9,8 @@ sifatida yaratadi. Google Apps Script kodining Node.js versiyasi.
 - `Q` ustuni (status) `1` bo'lsa yoki `A` (order id) bo'sh bo'lsa — o'tkazib yuboradi.
 - `uzum_order_detail` dan shu buyurtmaning pozitsiyalarini yig'adi.
 - MoySklad'ga POST qiladi; muvaffaqiyatli bo'lsa `Q`=1 va `S`=MoySklad ID yoziladi.
-- MoySklad tokeni `mc_token!A2` katakdan olinadi (kodda saqlanmaydi).
+- MoySklad tokeni `.env`dagi `MOYSKLAD_TOKEN`dan olinadi — `fikrlovchi-panel`
+  "O'zgaruvchilar" sahifasidan markazlashtirilgan holda boshqariladi.
 
 ## Kerakli fayllar
 
@@ -17,7 +18,7 @@ sifatida yaratadi. Google Apps Script kodining Node.js versiyasi.
 |------|------|
 | `config.json` | Spreadsheet ID, varaq/ustun nomlari, MoySklad havolalari. Git'da bor. |
 | `credentials.json` | Google service account kaliti. **Git'ga tushmaydi** — qo'lda joylash kerak. |
-| `.env` | `fikrlovchi-panel` bilan bog'lanish uchun (ixtiyoriy). **Git'ga tushmaydi.** |
+| `.env` | `MOYSKLAD_TOKEN` (majburiy) va `fikrlovchi-panel`/Telegram sozlamalari (ixtiyoriy). **Git'ga tushmaydi.** |
 
 ## Admin panel (fikrlovchi-panel) bilan bog'lash
 
