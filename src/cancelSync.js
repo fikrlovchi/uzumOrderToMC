@@ -4,6 +4,7 @@ const { colLetterToIndex } = require("./sheetsUtil");
 const { fetchOrdersPage } = require("./uzumApi");
 const moysklad = require("./moysklad");
 const { sendTelegramMessage } = require("./telegram");
+const { isDryRun } = require("./dryRun");
 
 const MAX_PAGES_PER_SHOP = 20;
 const PAGE_SIZE = 50;
@@ -121,11 +122,22 @@ async function handleCanceledOrder({ orders, rowIndex, orderId, moyskladToken, o
   const href = moysklad.customerOrderHref(moySkladId);
 
   try {
+    // GET o'qish uchun xavfsiz — DRY_RUN'da ham bajariladi, faqat keyingi
+    // yozish/xabar qadamlari o'tkazib yuboriladi.
     const currentStateHref = await moysklad.getOrderStateHref(href, moyskladToken);
 
     if (currentStateHref === config.moyskladStates.protectedHref) {
+      if (isDryRun()) {
+        logger.info(`[DRY_RUN] Order ${orderId} bekor qilingan, lekin MoySklad'da himoyalangan holatda — tegilmas edi.`);
+        return true;
+      }
       markCancelHandled(orders, rowIndex, ordersSheetName, rowUpdates);
       logger.info(`Order ${orderId} Uzum'da bekor qilingan, lekin MoySklad'da himoyalangan holatda — tegilmadi.`);
+      return true;
+    }
+
+    if (isDryRun()) {
+      logger.info(`[DRY_RUN] Order ${orderId} MoySklad'da bekor qilinardi va Telegram xabari yuborilardi.`);
       return true;
     }
 

@@ -2,6 +2,7 @@ const config = require("../config.json");
 const logger = require("./logger");
 const { getSheetsClient } = require("./oauthSheets");
 const { fetchOrdersPage } = require("./uzumApi");
+const { isDryRun } = require("./dryRun");
 
 // Uzum'dan CREATED holatidagi yangi buyurtmalarni olib, uzum_order/
 // uzum_order_detail'ga qo'shadi. uzbuyo@gmail.com OAuth akkaunti nomidan
@@ -109,6 +110,13 @@ async function run() {
 
       page++;
     }
+  }
+
+  if (isDryRun()) {
+    logger.info(
+      `[DRY_RUN] Uzum import: ${newOrdersBatch.length} ta yangi buyurtma, ${newItemsBatch.length} ta yangi item qo'shilardi (order ID'lar: ${newOrdersBatch.map((r) => r[0]).join(", ") || "yo'q"}).`
+    );
+    return;
   }
 
   if (newOrdersBatch.length > 0) {

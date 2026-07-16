@@ -75,6 +75,19 @@ mas'ul odam.
 shu yerda token bo'lishi kerak — bo'lmasa, shu do'kon uchun import/tasdiqlash/
 bekor-qilish tekshiruvi jimgina o'tkazib yuboriladi (xato sifatida loglanadi).
 
+### Birinchi marta ishga tushirish — DRY_RUN
+
+Yangi status-sinxronizatsiya funksiyasini xavfsiz tekshirib chiqish uchun
+`.env`da vaqtincha:
+```
+DRY_RUN=true
+```
+Shu holatda skript Uzum'ga confirm yubormaydi, MoySklad holatini o'zgartirmaydi,
+Telegram xabari yubormaydi va sheetga yozmaydi — faqat nima qilinishi
+kerakligini `[DRY_RUN] ...` prefiksi bilan loglaydi (`journalctl`/`logs/`).
+Loglarni ko'rib, hammasi to'g'ri ko'rinsa, `DRY_RUN=false` qilib qayta ishga
+tushiring (yoki butunlay olib tashlang — standart qiymat `false`).
+
 ### Eski GAS triggerlarini o'chirish
 
 Bu funksiyalar Apps Script'dagi ikkita eski avtomatikani (buyurtma import va

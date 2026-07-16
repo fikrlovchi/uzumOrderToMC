@@ -4,6 +4,7 @@ const { colLetterToIndex } = require("./sheetsUtil");
 const { tashkentMinutesNow, parseHHMM, isInHoldWindow } = require("./timeWindow");
 const { confirmOrder } = require("./uzumApi");
 const moysklad = require("./moysklad");
+const { isDryRun } = require("./dryRun");
 
 const ORD = Object.fromEntries(
   Object.entries(config.columns.orders).map(([k, v]) => [k, colLetterToIndex(v)])
@@ -72,14 +73,18 @@ async function confirmAndSetInitialState({ sheets, orders, moyskladToken }) {
         errorCount++;
         continue;
       }
-      try {
-        await confirmOrder({ shopToken, orderId });
-        rowUpdates.push(cellUpdate(ordersSheetName, "uzumConfirmed", i, 1));
-        row[ORD.uzumConfirmed] = 1;
-      } catch (e) {
-        logger.error(`Order ${orderId} Uzum'da tasdiqlanmadi: ${e.message}`);
-        errorCount++;
-        continue;
+      if (isDryRun()) {
+        logger.info(`[DRY_RUN] Order ${orderId} Uzum'da tasdiqlanardi (shop ${shopId}).`);
+      } else {
+        try {
+          await confirmOrder({ shopToken, orderId });
+          rowUpdates.push(cellUpdate(ordersSheetName, "uzumConfirmed", i, 1));
+          row[ORD.uzumConfirmed] = 1;
+        } catch (e) {
+          logger.error(`Order ${orderId} Uzum'da tasdiqlanmadi: ${e.message}`);
+          errorCount++;
+          continue;
+        }
       }
     }
 
@@ -87,6 +92,11 @@ async function confirmAndSetInitialState({ sheets, orders, moyskladToken }) {
 
     const holding = isInHoldWindow(tashkentMinutesNow(), startMin, endMin);
     const targetHref = holding ? config.moyskladStates.holdHref : config.moyskladStates.confirmedHref;
+
+    if (isDryRun()) {
+      logger.info(`[DRY_RUN] Order ${orderId} MoySklad holati o'rnatilardi: ${holding ? "hold" : "confirmed"}.`);
+      continue;
+    }
 
     try {
       await moysklad.setOrderState(href, targetHref, moyskladToken);
@@ -129,6 +139,11 @@ async function promoteHeldOrders({ sheets, orders, moyskladToken }) {
     const moySkladId = row[ORD.moySkladId];
     if (!moySkladId) continue;
     const href = moysklad.customerOrderHref(moySkladId);
+
+    if (isDryRun()) {
+      logger.info(`[DRY_RUN] Order ${orderId} oyna tugagach "confirmed" holatiga o'tkazilardi.`);
+      continue;
+    }
 
     try {
       await moysklad.setOrderState(href, config.moyskladStates.confirmedHref, moyskladToken);
