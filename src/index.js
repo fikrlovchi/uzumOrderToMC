@@ -7,6 +7,9 @@ const { colLetterToIndex, formatDateTimeGMT5 } = require("./sheetsUtil");
 const logger = require("./logger");
 const reporter = require("./reporter");
 const skuAlerts = require("./skuAlerts");
+const orderFetch = require("./orderFetch");
+const cancelSync = require("./cancelSync");
+const orderStatusSync = require("./orderStatusSync");
 
 const ORD = Object.fromEntries(
   Object.entries(config.columns.orders).map(([k, v]) => [k, colLetterToIndex(v)])
@@ -60,7 +63,10 @@ function buildPositions(details, orderId) {
     const prodHref = toHref(row[DET.product], entityType);
 
     positions.push({
-      quantity: parseFloat(row[DET.quantity]),
+      // uzum_order_detail!E allaqachon shu qatorning umumiy summasi (birlik
+      // narxi emas), shuning uchun miqdor 1 qilib yuboriladi, aks holda
+      // MoySklad'da narx x haqiqiy miqdor bo'lib ikki marta ko'payib ketardi.
+      quantity: 1,
       price: parseFloat(row[DET.price]) * 100,
       reserve: entityType === "service" ? 0 : 1,
       assortment: {
@@ -141,6 +147,11 @@ async function createMoySkladOrders() {
     throw new Error("MOYSKLAD_TOKEN .env faylida topilmadi");
   }
 
+  // Uzum'dan yangi (CREATED) buyurtmalarni sheetga qo'shadi (OAuth,
+  // uzbuyo@gmail.com) — shundan keyingi batchGet ularni ham o'qiydi, shu
+  // tsiklning o'zida qayta ishlanishi uchun.
+  await orderFetch.run();
+
   const { data } = await sheets.spreadsheets.values.batchGet({
     spreadsheetId,
     ranges: [ordersSheetName, detailsSheetName],
@@ -188,6 +199,10 @@ async function createMoySkladOrders() {
       if (response.status === 200 || response.status === 201) {
         const moySkladId = JSON.parse(resText).id;
         await markRowSent(sheets, spreadsheetId, ordersSheetName, i + 1, moySkladId);
+        // Shu tsiklning qolgan bosqichlari (tasdiqlash, holat o'rnatish) bu
+        // buyurtmani darhol ko'rishi uchun xotiradagi qatorni ham yangilaymiz.
+        order[ORD.status] = 1;
+        order[ORD.moySkladId] = moySkladId;
         logger.info(`Order ${orderId} muvaffaqiyatli yaratildi (${moySkladId}).`);
         successCount++;
       } else {
@@ -199,6 +214,18 @@ async function createMoySkladOrders() {
       errorCount++;
     }
   }
+
+  // Bekor qilish → oyna tugagach ko'tarish → yangi tasdiqlash+holat o'rnatish
+  // tartibida: bir xil tsiklda bekor qilingan buyurtma hech qachon keyingi
+  // bosqichlar tomonidan qayta "tasdiqlangan" holatga qaytarilmasin.
+  const cancelResult = await cancelSync.run({ sheets, orders, moyskladToken: token });
+  errorCount += cancelResult.errorCount;
+
+  const promoteResult = await orderStatusSync.promoteHeldOrders({ sheets, orders, moyskladToken: token });
+  errorCount += promoteResult.errorCount;
+
+  const confirmResult = await orderStatusSync.confirmAndSetInitialState({ sheets, orders, moyskladToken: token });
+  errorCount += confirmResult.errorCount;
 
   return { startedAt, successCount, errorCount };
 }

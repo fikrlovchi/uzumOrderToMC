@@ -1,5 +1,6 @@
 node_modules/
 credentials.json
+oauth.json
 logs/
 .env
 data/

@@ -1,0 +1,137 @@
+const config = require("../config.json");
+const logger = require("./logger");
+const { getSheetsClient } = require("./oauthSheets");
+const { fetchOrdersPage } = require("./uzumApi");
+
+// Uzum'dan CREATED holatidagi yangi buyurtmalarni olib, uzum_order/
+// uzum_order_detail'ga qo'shadi. uzbuyo@gmail.com OAuth akkaunti nomidan
+// yozadi (service account emas) — qolgan barcha o'qish/yozishlar hamon
+// service account orqali (index.js).
+async function run() {
+  let sheets;
+  try {
+    sheets = getSheetsClient();
+  } catch (e) {
+    logger.error(`Uzum import o'tkazib yuborildi (oauth.json topilmadi/noto'g'ri): ${e.message}`);
+    return;
+  }
+
+  const spreadsheetId = config.spreadsheetId;
+  const ordersSheetName = config.sheets.orders;
+  const detailsSheetName = config.sheets.details;
+  const shopsSheetName = config.sheets.shops;
+
+  const { data } = await sheets.spreadsheets.values.batchGet({
+    spreadsheetId,
+    ranges: [ordersSheetName, detailsSheetName, shopsSheetName],
+    valueRenderOption: "UNFORMATTED_VALUE",
+  });
+
+  const orders = data.valueRanges[0].values || [];
+  const details = data.valueRanges[1].values || [];
+  const shopRows = data.valueRanges[2].values || [];
+
+  const existingOrderIds = new Set();
+  for (let i = 1; i < orders.length; i++) {
+    if (orders[i][0]) existingOrderIds.add(String(orders[i][0]));
+  }
+
+  const existingItemIds = new Set();
+  for (let i = 1; i < details.length; i++) {
+    if (details[i][0]) existingItemIds.add(String(details[i][0]));
+  }
+
+  const shops = [];
+  for (let i = 1; i < shopRows.length; i++) {
+    const shopId = shopRows[i][0];
+    const token = shopRows[i][2];
+    if (shopId && token) shops.push({ id: String(shopId), token: String(token) });
+  }
+
+  const newOrdersBatch = [];
+  const newItemsBatch = [];
+
+  for (const shop of shops) {
+    let page = 0;
+
+    while (true) {
+      const pageOrders = await fetchOrdersPage({
+        shopId: shop.id,
+        shopToken: shop.token,
+        status: "CREATED",
+        page,
+      });
+
+      if (pageOrders === null) {
+        logger.error(`Uzum'dan yangi buyurtmalarni olishda xato (shop ${shop.id}, sahifa ${page}) — bu do'kon uchun to'xtatildi.`);
+        break;
+      }
+      if (pageOrders.length === 0) break;
+
+      for (const o of pageOrders) {
+        const orderId = String(o.id);
+        if (!existingOrderIds.has(orderId)) {
+          newOrdersBatch.push([
+            o.id,
+            o.status,
+            o.dateCreated,
+            o.acceptUntil,
+            o.deliverUntil,
+            o.price,
+            o.shopId,
+            o.stock?.title || "",
+            o.stock?.address || "",
+            o.place || "",
+            o.invoiceNumber || "",
+            o.dropOffPoint?.address || "",
+            o.scheme || "",
+          ]);
+          existingOrderIds.add(orderId);
+        }
+
+        for (const it of o.orderItems || []) {
+          const itemId = String(it.id);
+          if (itemId && !existingItemIds.has(itemId)) {
+            newItemsBatch.push([
+              it.id,
+              it.barcode || "",
+              it.skuTitle || "",
+              it.title || "",
+              it.price || "",
+              it.amount || "",
+              it.photo?.photo?.["720"]?.high || "",
+              o.id,
+            ]);
+            existingItemIds.add(itemId);
+          }
+        }
+      }
+
+      page++;
+    }
+  }
+
+  if (newOrdersBatch.length > 0) {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${ordersSheetName}!A:M`,
+      valueInputOption: "RAW",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: newOrdersBatch },
+    });
+  }
+
+  if (newItemsBatch.length > 0) {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${detailsSheetName}!A:H`,
+      valueInputOption: "RAW",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: newItemsBatch },
+    });
+  }
+
+  logger.info(`Uzum import: ${newOrdersBatch.length} ta yangi buyurtma, ${newItemsBatch.length} ta yangi item qo'shildi.`);
+}
+
+module.exports = { run };

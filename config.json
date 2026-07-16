@@ -3,18 +3,23 @@
   "credentialsPath": "./credentials.json",
   "sheets": {
     "orders": "uzum_order",
-    "details": "uzum_order_detail"
+    "details": "uzum_order_detail",
+    "shops": "uzum_shop"
   },
   "columns": {
     "orders": {
       "orderId": "A",
       "date": "E",
+      "shopId": "G",
       "shipmentAddress": "I",
       "organization": "O",
       "salesChannel": "P",
       "status": "Q",
       "trackingNumber": "R",
-      "moySkladId": "S"
+      "moySkladId": "S",
+      "uzumConfirmed": "T",
+      "mcState": "U",
+      "cancelHandled": "V"
     },
     "details": {
       "price": "E",
@@ -31,5 +36,11 @@
     "deliveryValue": "https://api.moysklad.ru/api/remap/1.2/entity/customentity/07014f4b-8b34-11f0-0a80-003d001bf4c5/0a8dc706-2395-11f1-0a80-1ca0000f9429",
     "orderNumAttr": "https://api.moysklad.ru/api/remap/1.2/entity/customerorder/metadata/attributes/6950c3db-986e-11f0-0a80-1bc2000dbbf9",
     "trackingAttr": "https://api.moysklad.ru/api/remap/1.2/entity/customerorder/metadata/attributes/869bebdf-3701-11f1-0a80-1c8400281f99"
+  },
+  "moyskladStates": {
+    "holdHref": "https://api.moysklad.ru/api/remap/1.2/entity/customerorder/metadata/states/a479862e-97e3-11ed-0a80-0ca1009761c3",
+    "confirmedHref": "https://api.moysklad.ru/api/remap/1.2/entity/customerorder/metadata/states/a4798772-97e3-11ed-0a80-0ca1009761c5",
+    "canceledHref": "https://api.moysklad.ru/api/remap/1.2/entity/customerorder/metadata/states/a47989ee-97e3-11ed-0a80-0ca1009761c9",
+    "protectedHref": "https://api.moysklad.ru/api/remap/1.2/entity/customerorder/metadata/states/e3f3673f-8cc0-11f0-0a80-17c2003635fe"
   }
 }
