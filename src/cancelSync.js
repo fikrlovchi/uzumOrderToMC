@@ -60,11 +60,28 @@ async function run({ moyskladToken }) {
   const state = cancelState.load();
   const budget = cancelState.createBudget(state, dailyLimit);
 
+  // Har tsiklda to'liq maxLookbackDays'gacha (masalan 30 kun) skanerlash
+  // Uzum'ni tez-tez 429'ga uchratadi (bekor qilinganlar ko'p to'plangan
+  // do'konlarda o'nlab sahifa kerak bo'lishi mumkin). Shuning uchun:
+  //  - har tsiklda YENGIL skanerlash (bir necha sahifa) — yaqinda yaratilgan
+  //    buyurtmaning bekor qilinishini tez ushlaydi (eng ko'p uchraydigan holat).
+  //  - deepSweepIntervalMs'da bir marta CHUQUR skanerlash (to'liq
+  //    maxLookbackDays) — kamdan-kam holat: ancha oldin yaratilgan buyurtma
+  //    hozir bekor qilinsa, uni bir soatgacha kechikish bilan baribir ushlaydi.
+  const deepSweepIntervalMs = cfg.uzum.deepSweepIntervalMs ?? 60 * 60 * 1000;
+  const isDeepSweepDue =
+    !state.lastDeepSweepAt || Date.now() - Date.parse(state.lastDeepSweepAt) > deepSweepIntervalMs;
+  const sweepCfg = isDeepSweepDue
+    ? cfg.uzum
+    : { ...cfg.uzum, maxPagesPerSweep: cfg.uzum.shallowMaxPages ?? 3 };
+
+  let allShopsCompleted = true;
+
   for (const cabinet of cabinets) {
     try {
-      const { ids, exhausted, newCursors } = await sweepCabinet(cabinet, state.shopCursors, budget, cfg.uzum);
-      Object.assign(state.shopCursors, newCursors);
+      const { ids, exhausted } = await sweepCabinet(cabinet, budget, sweepCfg);
       if (exhausted) {
+        allShopsCompleted = false;
         logger.error(`"${cabinet.name}": kunlik Uzum so'rov limiti (${dailyLimit}) tugadi — qolgan sahifalar keyingi tsiklda.`);
       }
       for (const id of ids) {
@@ -74,9 +91,15 @@ async function run({ moyskladToken }) {
         }
       }
     } catch (e) {
+      allShopsCompleted = false;
       stats.sweepErrors++;
       logger.error(`"${cabinet.name}" kabinetini o'qishda xato: ${e.message}`);
     }
+  }
+
+  if (isDeepSweepDue && allShopsCompleted) {
+    state.lastDeepSweepAt = new Date().toISOString();
+    logger.info(`Chuqur skanerlash (${cfg.uzum.maxLookbackDays} kunlik) yakunlandi.`);
   }
 
   const pending = Object.entries(state.orders).filter(([, o]) => o.status === "pending");

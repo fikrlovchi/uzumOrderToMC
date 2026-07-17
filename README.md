@@ -98,9 +98,27 @@ sifatida ishlar edi (o'zining kunlik so'rov limiti, sahifa-kursori va
 `externalCode` orqali MoySklad qidiruvi bilan). Bu mantiq endi to'liq shu
 loyihaga ko'chirilgan (`src/cancelState.js`, `src/uzumCabinets.js`,
 `src/uzumCancelSweep.js`, `src/cancelSync.js`). **Shu funksiya serverda
-ishga tushirilgach, eski `cancelUzumOrder` systemd timer'ini o'chiring**
-— aks holda ikkalasi bir vaqtda MoySklad'ga yozib, keraksiz ravishda
-ustma-ust ishlaydi.
+ishga tushirilgach, eski `cancelUzumOrder` xizmatini (va agar Apps
+Script'da alohida trigger sifatida ham qolgan bo'lsa — uni ham) o'chiring**
+— aks holda bir nechta jarayon bir vaqtda Uzum/MoySklad'ga so'rov yuborib,
+tezlik-limitiga (429) tez uchraydi.
+
+**Muhim topilma:** Uzum'ning CANCELED ro'yxati buyurtmaning bekor qilingan
+sanasi (`dateCancelled`) emas, balki **yaratilgan sanasi (`dateCreated`)
+bo'yicha kamayish tartibida** qaytadi (tekshirilgan). Bu degani — sahifalar
+vaqt o'tishi bilan "muhrlanmaydi": ancha oldin yaratilgan buyurtma bugun
+bekor qilinsa, u ro'yxatning chuqur qismida joylashaveradi. Shuning uchun
+saqlangan sahifa kursori ishlatilmaydi (buyurtmalarni o'tkazib yuborishi
+mumkin edi). O'rniga ikki qatlamli skanerlash:
+- **Har tsiklda (2 daqiqa) yengil skanerlash** — `shallowMaxPages` (standart 3)
+  sahifagacha, yaqinda yaratilgan buyurtmaning bekor qilinishini tez ushlaydi.
+- **`deepSweepIntervalMs`da (standart 1 soat) bir marta chuqur skanerlash** —
+  `maxLookbackDays` (standart 30 kun) gacha to'liq, ancha oldin yaratilgan
+  buyurtma hozir bekor qilingan kamdan-kam holatni ushlaydi.
+
+Ikkalasi ham sahifadagi eng eski yozuvning `dateCreated`i `maxLookbackDays`dan
+eskirganda to'xtaydi — ro'yxat shu tartibda ekan, undan naryog'i ham albatta
+eskiroq bo'ladi.
 
 ### Birinchi marta ishga tushirish — DRY_RUN
 

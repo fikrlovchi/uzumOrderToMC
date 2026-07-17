@@ -48,7 +48,10 @@
       "status": "CANCELED",
       "scheme": "FBS",
       "pageSize": 50,
+      "maxLookbackDays": 30,
       "maxPagesPerSweep": 40,
+      "shallowMaxPages": 3,
+      "deepSweepIntervalMs": 3600000,
       "maxRetry": 3,
       "requestDelayMs": 300
     },

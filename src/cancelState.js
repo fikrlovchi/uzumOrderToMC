@@ -2,9 +2,11 @@ const fs = require("fs");
 const path = require("path");
 
 // Bekor qilishni aniqlash uchun lokal holat fayli: qaysi buyurtmalar ko'rilgani
-// va MoySklad'da yangilangani (orders), har do'konning oxirgi skanerlangan
-// sahifasi (shopCursors) hamda Uzum'ga bugun nechta so'rov yuborilgani
-// (uzumRequests).
+// va MoySklad'da yangilangani (orders) hamda Uzum'ga bugun nechta so'rov
+// yuborilgani (uzumRequests). Sahifa kursori qasddan SAQLANMAYDI — Uzum'ning
+// CANCELED ro'yxati dateCreated bo'yicha kamayish tartibida qaytadi, shuning
+// uchun sahifalar vaqt o'tishi bilan "muhrlanmaydi" (uzumCancelSweep.js'dagi
+// izohga qarang) va kursor buyurtmalarni o'tkazib yuborishi mumkin edi.
 const dataDir = path.join(__dirname, "..", "data");
 const stateFile = path.join(dataDir, "cancel-state.json");
 
@@ -13,11 +15,11 @@ function load() {
     const parsed = JSON.parse(fs.readFileSync(stateFile, "utf8"));
     return {
       orders: parsed.orders || {},
-      shopCursors: parsed.shopCursors || {},
       uzumRequests: parsed.uzumRequests || {},
+      lastDeepSweepAt: parsed.lastDeepSweepAt || null,
     };
   } catch {
-    return { orders: {}, shopCursors: {}, uzumRequests: {} };
+    return { orders: {}, uzumRequests: {}, lastDeepSweepAt: null };
   }
 }
 

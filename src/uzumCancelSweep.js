@@ -46,66 +46,62 @@ async function requestPage(url, token, maxRetry, spend, cabinetName) {
   throw lastErr;
 }
 
-// CANCELED buyurtmalar tarixiy tarzda to'planib boradi, shuning uchun har bir
-// do'kon uchun oxirgi skanerlangan sahifa raqami (kursor) saqlanadi va keyingi
-// run o'sha yerdan davom etadi.
-//
-// Kursor mantig'i: to'la sahifalar ("pageSize" ta buyurtma) "muhrlangan" — ularga
-// yangi buyurtma qo'shilmaydi, shuning uchun ularni qayta o'qimaymiz va kursorni
-// oldinga suramiz. To'la bo'lmagan (partial yoki bo'sh) birinchi sahifa — "chegara":
-// yangi bekor qilingan buyurtmalar aynan shu yerda paydo bo'ladi. Kursor shu
-// chegara sahifasida qoldiriladi, shunda keyingi run uni qayta tekshiradi va
-// yangilarini oladi.
-//
-// DIQQAT: bu Uzum ro'yxatni barqaror, "eski buyurtma oldinda" tartibida
-// qaytaradi degan taxminga asoslanadi (yangilari oxiriga qo'shiladi). Agar API
-// yangilarni oldinga qo'ysa, kursor o'rniga har run'da 0-sahifadan o'qish kerak.
-async function sweepShop(cabinet, shopId, startPage, budget, cfg, ids) {
+// MUHIM: Uzum bu ro'yxatni buyurtmaning dateCancelled emas, balki dateCreated
+// bo'yicha KAMAYISH tartibida qaytaradi (eng yangi yaratilgan birinchi) —
+// amalda tekshirilgan. Bu degani: eski (ancha oldin yaratilgan) buyurtma
+// bugun bekor qilinsa ham, u ro'yxatda o'zining ASL yaratilgan sanasiga mos
+// chuqur sahifada qoladi — sahifa raqamlari vaqt o'tishi bilan "muhrlanmaydi".
+// Shuning uchun sahifa kursorini SAQLAMAYMIZ (bu noto'g'ri va buyurtmalarni
+// o'tkazib yuborishi mumkin edi): har safar 0-sahifadan boshlaymiz va faqat
+// sahifadagi ENG ESKI yozuvning dateCreated'i cfg.maxLookbackDays'dan eski
+// bo'lib qolganda to'xtatamiz — ro'yxat shu tartibda ekan, undan naryog'i
+// ham albatta eskiroq bo'ladi, demak bizning (yaqinda yaratilgan, hali
+// yechilmagan) nomzodlarimiz orasida bo'lishi mumkin emas.
+async function sweepShop(cabinet, shopId, budget, cfg, ids) {
   const spend = () => budget.trySpend(cabinet.name);
-  let page = Math.max(0, parseInt(startPage, 10) || 0);
+  const cutoffMs = Date.now() - cfg.maxLookbackDays * 24 * 3600 * 1000;
 
-  for (let fetched = 0; fetched < cfg.maxPagesPerSweep; fetched++) {
+  for (let page = 0; page < cfg.maxPagesPerSweep; page++) {
     let json;
     try {
       json = await requestPage(buildUrl(shopId, page, cfg), cabinet.token, cfg.maxRetry, spend, cabinet.name);
     } catch (e) {
-      if (e instanceof BudgetExhaustedError) {
-        return { cursor: page, exhausted: true, capped: false };
-      }
+      if (e instanceof BudgetExhaustedError) return { exhausted: true, capped: false };
       throw e;
     }
 
     const orders = (json && json.payload && json.payload.orders) || [];
+    if (orders.length === 0) return { exhausted: false, capped: false };
+
     for (const order of orders) ids.add(String(order.id));
 
-    if (orders.length < cfg.pageSize) {
-      return { cursor: page, exhausted: false, capped: false };
+    const oldestOnPage = orders[orders.length - 1]?.dateCreated;
+    if (typeof oldestOnPage === "number" && oldestOnPage < cutoffMs) {
+      return { exhausted: false, capped: false };
     }
 
-    page++;
+    if (orders.length < cfg.pageSize) return { exhausted: false, capped: false };
+
     if (cfg.requestDelayMs) await sleep(cfg.requestDelayMs);
   }
 
-  return { cursor: page, exhausted: false, capped: true };
+  return { exhausted: false, capped: true };
 }
 
-// Kabinetning har bir do'konini o'z kursoridan skanerlaydi. Budjet tugasa
-// qolgan do'konlar keyingi run'ga qoldiriladi. Faqat muvaffaqiyatli skanerlangan
-// do'konlarning kursori qaytariladi (xato bergan do'kon kursori o'zgarmaydi).
-async function sweepCabinet(cabinet, cursors, budget, cfg) {
+// Kabinetning har bir do'konini 0-sahifadan skanerlaydi (yuqoridagi izohga
+// qarang — kursor endi ishlatilmaydi). Budjet tugasa qolgan do'konlar
+// keyingi run'ga qoldiriladi.
+async function sweepCabinet(cabinet, budget, cfg) {
   const ids = new Set();
-  const newCursors = {};
   let exhausted = false;
 
   for (const shopId of cabinet.shopIds) {
-    const startPage = cursors[shopId] || 0;
     try {
-      const { cursor, exhausted: ex, capped } = await sweepShop(cabinet, shopId, startPage, budget, cfg, ids);
-      newCursors[shopId] = cursor;
+      const { exhausted: ex, capped } = await sweepShop(cabinet, shopId, budget, cfg, ids);
       if (capped) {
         logger.info(
           `"${cabinet.name}" do'kon ${shopId}: bir run chegarasi (${cfg.maxPagesPerSweep} sahifa) — ` +
-            `qolgani keyingi run'da (kursor ${cursor})`
+            `qolgani keyingi run'da`
         );
       }
       if (ex) {
@@ -119,7 +115,7 @@ async function sweepCabinet(cabinet, cursors, budget, cfg) {
     if (cfg.requestDelayMs) await sleep(cfg.requestDelayMs);
   }
 
-  return { ids, exhausted, newCursors };
+  return { ids, exhausted };
 }
 
 module.exports = { sweepCabinet, BudgetExhaustedError };
