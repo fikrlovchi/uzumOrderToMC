@@ -3,6 +3,7 @@ const logger = require("./logger");
 const { colLetterToIndex } = require("./sheetsUtil");
 const { tashkentMinutesNow, parseHHMM, isInHoldWindow } = require("./timeWindow");
 const { confirmOrder } = require("./uzumApi");
+const { parseCabinets, buildShopTokenMap } = require("./uzumCabinets");
 const moysklad = require("./moysklad");
 const { isDryRun } = require("./dryRun");
 
@@ -21,20 +22,13 @@ function windowBounds() {
   };
 }
 
-async function loadShopTokens(sheets) {
-  const { data } = await sheets.spreadsheets.values.get({
-    spreadsheetId: config.spreadsheetId,
-    range: config.sheets.shops,
-    valueRenderOption: "UNFORMATTED_VALUE",
-  });
-  const rows = data.values || [];
-  const tokens = new Map();
-  for (let i = 1; i < rows.length; i++) {
-    const shopId = rows[i][0];
-    const token = rows[i][2];
-    if (shopId && token) tokens.set(String(shopId), String(token));
+function loadShopTokens() {
+  try {
+    return buildShopTokenMap(parseCabinets(process.env));
+  } catch (e) {
+    logger.error(`Uzum do'kon tokenlarini o'qishda xato: ${e.message}`);
+    return new Map();
   }
-  return tokens;
 }
 
 function cellUpdate(sheetName, columnKey, rowIndex, value) {
@@ -42,14 +36,40 @@ function cellUpdate(sheetName, columnKey, rowIndex, value) {
   return { range: `${sheetName}!${columnLetter}${rowIndex + 1}`, values: [[value]] };
 }
 
-// Q=1 (MoySklad'da yaratilgan), T bo'sh (hali Uzum'da tasdiqlanmagan) yoki
-// U hali "done" bo'lmagan buyurtmalar uchun: Uzum'da tasdiqlaydi (T=1, faqat
-// bir marta — muvaffaqiyatsiz MoySklad holat o'rnatish Uzum'ga qayta so'rov
-// yubormaydi, faqat holatni qayta urinadi), so'ng joriy vaqtga qarab MoySklad
-// holatini "hold" yoki "confirmed" qilib qo'yadi.
+async function confirmOnUzum({ orders, rowIndex, orderId, shopTokens, rowUpdates, ordersSheetName }) {
+  const row = orders[rowIndex];
+  const shopId = String(cell(row[ORD.shopId]));
+  const shopToken = shopTokens.get(shopId);
+  if (!shopToken) {
+    logger.error(`Order ${orderId} uchun shop ${shopId} tokeni topilmadi (.env UZUM_SHOP_*) — confirm o'tkazib yuborildi.`);
+    return false;
+  }
+  if (isDryRun()) {
+    logger.info(`[DRY_RUN] Order ${orderId} Uzum'da tasdiqlanardi (shop ${shopId}).`);
+    return true;
+  }
+  try {
+    await confirmOrder({ shopToken, orderId });
+    rowUpdates.push(cellUpdate(ordersSheetName, "uzumConfirmed", rowIndex, 1));
+    row[ORD.uzumConfirmed] = 1;
+    return true;
+  } catch (e) {
+    logger.error(`Order ${orderId} Uzum'da tasdiqlanmadi: ${e.message}`);
+    return false;
+  }
+}
+
+// Q=1 (MoySklad'da yaratilgan), hali cancelHandled=1 bo'lmagan va mcState hali
+// "done" bo'lmagan buyurtmalar uchun:
+//  - Toshkent vaqti hold oynasida (WINDOW_HOLD_START..END) bo'lsa: Uzum'da
+//    HALI TASDIQLANMAYDI — faqat MoySklad holati "hold"ga o'rnatiladi.
+//  - Oyna tashqarisida bo'lsa: Uzum'da darhol tasdiqlanadi VA MoySklad holati
+//    "confirmed"ga o'rnatiladi (bir vaqtda).
+// Oyna ichida "hold" qilib qo'yilgan buyurtmalarni oyna tugagach Uzum'da
+// tasdiqlash + "confirmed"ga o'tkazish ishi promoteHeldOrders'da amalga oshadi.
 async function confirmAndSetInitialState({ sheets, orders, moyskladToken }) {
   const ordersSheetName = config.sheets.orders;
-  const shopTokens = await loadShopTokens(sheets);
+  const shopTokens = loadShopTokens();
   const { startMin, endMin } = windowBounds();
   const rowUpdates = [];
   let errorCount = 0;
@@ -60,50 +80,46 @@ async function confirmAndSetInitialState({ sheets, orders, moyskladToken }) {
     const sentToMoySklad = row[ORD.status];
     const cancelHandled = row[ORD.cancelHandled];
     if (!orderId || sentToMoySklad != 1 || cancelHandled == 1) continue;
+    if (row[ORD.mcState] === "done" || row[ORD.mcState] === "hold") continue;
 
     const moySkladId = row[ORD.moySkladId];
     if (!moySkladId) continue;
     const href = moysklad.customerOrderHref(moySkladId);
 
-    if (row[ORD.uzumConfirmed] != 1) {
-      const shopId = String(cell(row[ORD.shopId]));
-      const shopToken = shopTokens.get(shopId);
-      if (!shopToken) {
-        logger.error(`Order ${orderId} uchun shop ${shopId} tokeni topilmadi (uzum_shop) — confirm o'tkazib yuborildi.`);
-        errorCount++;
+    const holding = isInHoldWindow(tashkentMinutesNow(), startMin, endMin);
+
+    if (holding) {
+      if (isDryRun()) {
+        logger.info(`[DRY_RUN] Order ${orderId} MoySklad holati o'rnatilardi: hold (Uzum hali tasdiqlanmaydi).`);
         continue;
       }
-      if (isDryRun()) {
-        logger.info(`[DRY_RUN] Order ${orderId} Uzum'da tasdiqlanardi (shop ${shopId}).`);
-      } else {
-        try {
-          await confirmOrder({ shopToken, orderId });
-          rowUpdates.push(cellUpdate(ordersSheetName, "uzumConfirmed", i, 1));
-          row[ORD.uzumConfirmed] = 1;
-        } catch (e) {
-          logger.error(`Order ${orderId} Uzum'da tasdiqlanmadi: ${e.message}`);
-          errorCount++;
-          continue;
-        }
+      try {
+        await moysklad.setOrderState(href, config.moyskladStates.holdHref, moyskladToken);
+        rowUpdates.push(cellUpdate(ordersSheetName, "mcState", i, "hold"));
+        row[ORD.mcState] = "hold";
+        logger.info(`Order ${orderId} MoySklad holati o'rnatildi: hold (Uzum 11:01dan keyin tasdiqlanadi).`);
+      } catch (e) {
+        logger.error(`Order ${orderId} uchun MoySklad holatini o'rnatishda xato: ${e.message}`);
+        errorCount++;
       }
+      continue;
     }
 
-    if (row[ORD.mcState] === "done") continue;
-
-    const holding = isInHoldWindow(tashkentMinutesNow(), startMin, endMin);
-    const targetHref = holding ? config.moyskladStates.holdHref : config.moyskladStates.confirmedHref;
-
+    const confirmed = await confirmOnUzum({ orders, rowIndex: i, orderId, shopTokens, rowUpdates, ordersSheetName });
+    if (!confirmed) {
+      errorCount++;
+      continue;
+    }
     if (isDryRun()) {
-      logger.info(`[DRY_RUN] Order ${orderId} MoySklad holati o'rnatilardi: ${holding ? "hold" : "confirmed"}.`);
+      logger.info(`[DRY_RUN] Order ${orderId} MoySklad holati o'rnatilardi: confirmed.`);
       continue;
     }
 
     try {
-      await moysklad.setOrderState(href, targetHref, moyskladToken);
-      const newState = holding ? "hold" : "done";
-      rowUpdates.push(cellUpdate(ordersSheetName, "mcState", i, newState));
-      row[ORD.mcState] = newState;
-      logger.info(`Order ${orderId} MoySklad holati o'rnatildi: ${holding ? "hold" : "confirmed"}.`);
+      await moysklad.setOrderState(href, config.moyskladStates.confirmedHref, moyskladToken);
+      rowUpdates.push(cellUpdate(ordersSheetName, "mcState", i, "done"));
+      row[ORD.mcState] = "done";
+      logger.info(`Order ${orderId} Uzum'da tasdiqlandi va MoySklad holati "confirmed" qilindi.`);
     } catch (e) {
       logger.error(`Order ${orderId} uchun MoySklad holatini o'rnatishda xato: ${e.message}`);
       errorCount++;
@@ -120,14 +136,16 @@ async function confirmAndSetInitialState({ sheets, orders, moyskladToken }) {
   return { errorCount };
 }
 
-// U="hold" bo'lgan buyurtmalarni, oyna tugagach (hozir hold oynasida bo'lmasa),
-// "confirmed" holatiga o'tkazadi.
+// mcState="hold" bo'lgan buyurtmalarni, oyna tugagach (hozir hold oynasida
+// bo'lmasa): agar hali Uzum'da tasdiqlanmagan bo'lsa — tasdiqlaydi, so'ng
+// MoySklad holatini "confirmed"ga o'tkazadi.
 async function promoteHeldOrders({ sheets, orders, moyskladToken }) {
   const ordersSheetName = config.sheets.orders;
   const { startMin, endMin } = windowBounds();
 
   if (isInHoldWindow(tashkentMinutesNow(), startMin, endMin)) return { errorCount: 0 };
 
+  const shopTokens = loadShopTokens();
   const rowUpdates = [];
   let errorCount = 0;
 
@@ -140,6 +158,14 @@ async function promoteHeldOrders({ sheets, orders, moyskladToken }) {
     if (!moySkladId) continue;
     const href = moysklad.customerOrderHref(moySkladId);
 
+    if (row[ORD.uzumConfirmed] != 1) {
+      const confirmed = await confirmOnUzum({ orders, rowIndex: i, orderId, shopTokens, rowUpdates, ordersSheetName });
+      if (!confirmed) {
+        errorCount++;
+        continue;
+      }
+    }
+
     if (isDryRun()) {
       logger.info(`[DRY_RUN] Order ${orderId} oyna tugagach "confirmed" holatiga o'tkazilardi.`);
       continue;
@@ -149,7 +175,7 @@ async function promoteHeldOrders({ sheets, orders, moyskladToken }) {
       await moysklad.setOrderState(href, config.moyskladStates.confirmedHref, moyskladToken);
       rowUpdates.push(cellUpdate(ordersSheetName, "mcState", i, "done"));
       row[ORD.mcState] = "done";
-      logger.info(`Order ${orderId} oyna tugagach "confirmed" holatiga o'tkazildi.`);
+      logger.info(`Order ${orderId} oyna tugagach Uzum'da tasdiqlandi va "confirmed" holatiga o'tkazildi.`);
     } catch (e) {
       logger.error(`Order ${orderId} holatini "confirmed"ga o'tkazishda xato: ${e.message}`);
       errorCount++;

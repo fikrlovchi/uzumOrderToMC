@@ -2,6 +2,7 @@ const config = require("../config.json");
 const logger = require("./logger");
 const { getSheetsClient } = require("./oauthSheets");
 const { fetchOrdersPage } = require("./uzumApi");
+const { parseCabinets, buildShopTokenMap } = require("./uzumCabinets");
 const { isDryRun } = require("./dryRun");
 
 // Uzum'dan CREATED holatidagi yangi buyurtmalarni olib, uzum_order/
@@ -17,20 +18,27 @@ async function run() {
     return;
   }
 
+  let cabinets;
+  try {
+    cabinets = parseCabinets(process.env);
+  } catch (e) {
+    logger.error(`Uzum import o'tkazib yuborildi: ${e.message}`);
+    return;
+  }
+  const shopTokens = buildShopTokenMap(cabinets);
+
   const spreadsheetId = config.spreadsheetId;
   const ordersSheetName = config.sheets.orders;
   const detailsSheetName = config.sheets.details;
-  const shopsSheetName = config.sheets.shops;
 
   const { data } = await sheets.spreadsheets.values.batchGet({
     spreadsheetId,
-    ranges: [ordersSheetName, detailsSheetName, shopsSheetName],
+    ranges: [ordersSheetName, detailsSheetName],
     valueRenderOption: "UNFORMATTED_VALUE",
   });
 
   const orders = data.valueRanges[0].values || [];
   const details = data.valueRanges[1].values || [];
-  const shopRows = data.valueRanges[2].values || [];
 
   const existingOrderIds = new Set();
   for (let i = 1; i < orders.length; i++) {
@@ -42,29 +50,22 @@ async function run() {
     if (details[i][0]) existingItemIds.add(String(details[i][0]));
   }
 
-  const shops = [];
-  for (let i = 1; i < shopRows.length; i++) {
-    const shopId = shopRows[i][0];
-    const token = shopRows[i][2];
-    if (shopId && token) shops.push({ id: String(shopId), token: String(token) });
-  }
-
   const newOrdersBatch = [];
   const newItemsBatch = [];
 
-  for (const shop of shops) {
+  for (const [shopId, shopToken] of shopTokens) {
     let page = 0;
 
     while (true) {
       const pageOrders = await fetchOrdersPage({
-        shopId: shop.id,
-        shopToken: shop.token,
+        shopId,
+        shopToken,
         status: "CREATED",
         page,
       });
 
       if (pageOrders === null) {
-        logger.error(`Uzum'dan yangi buyurtmalarni olishda xato (shop ${shop.id}, sahifa ${page}) — bu do'kon uchun to'xtatildi.`);
+        logger.error(`Uzum'dan yangi buyurtmalarni olishda xato (shop ${shopId}, sahifa ${page}) — bu do'kon uchun to'xtatildi.`);
         break;
       }
       if (pageOrders.length === 0) break;

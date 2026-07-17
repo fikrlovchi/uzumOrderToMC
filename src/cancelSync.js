@@ -1,162 +1,150 @@
 const config = require("../config.json");
 const logger = require("./logger");
-const { colLetterToIndex } = require("./sheetsUtil");
-const { fetchOrdersPage } = require("./uzumApi");
+const cancelState = require("./cancelState");
+const { parseCabinets } = require("./uzumCabinets");
+const { sweepCabinet } = require("./uzumCancelSweep");
 const moysklad = require("./moysklad");
 const { sendTelegramMessage } = require("./telegram");
 const { isDryRun } = require("./dryRun");
 
-const MAX_PAGES_PER_SHOP = 20;
-const PAGE_SIZE = 50;
-
-const ORD = Object.fromEntries(
-  Object.entries(config.columns.orders).map(([k, v]) => [k, colLetterToIndex(v)])
-);
-
-function cell(value) {
-  return value === undefined || value === null ? "" : value;
-}
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[ch]));
 }
 
-// Uzum'da CANCELED bo'lgan, lekin bizda hali cancelHandled=1 deb belgilanmagan
-// buyurtmalarni topib, MoySklad holatini bekor qilingan qilib qo'yadi va
-// mas'ul odamga Telegram orqali xabar beradi. Har bir do'kon uchun sahifa 0
-// dan boshlanadi (saqlangan "kursor" ishlatilmaydi — Uzum ro'yxati vaqt
-// bo'yicha kamayish tartibida bo'lishi mumkin, bu holda saqlangan sahifa
-// raqami vaqt o'tishi bilan noto'g'ri yozuvlarga ishora qila boshlaydi).
-// O'rniga: har bir do'kon uchun nomzodlar to'plami bo'shagach yoki bo'sh
-// sahifa/MAX_PAGES_PER_SHOP chegarasiga yetilgach to'xtatiladi.
-async function run({ sheets, orders, moyskladToken }) {
-  const spreadsheetId = config.spreadsheetId;
-  const ordersSheetName = config.sheets.orders;
-  const shopsSheetName = config.sheets.shops;
-
-  const { data } = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: shopsSheetName,
-    valueRenderOption: "UNFORMATTED_VALUE",
+async function notifyCancellation(orderId) {
+  const name = process.env.CANCEL_NOTIFY_NAME;
+  const chatId = process.env.CANCEL_NOTIFY_CHAT_ID;
+  const tag = name && chatId ? `<a href="tg://user?id=${chatId}">${escapeHtml(name)}</a>` : "";
+  await sendTelegramMessage({
+    text: `❌ Buyurtma bekor qilindi: ${escapeHtml(orderId)}${tag ? "\n" + tag : ""}`,
+    parseMode: "HTML",
   });
-  const shopRows = data.values || [];
-  const shopTokens = new Map();
-  for (let i = 1; i < shopRows.length; i++) {
-    const shopId = shopRows[i][0];
-    const token = shopRows[i][2];
-    if (shopId && token) shopTokens.set(String(shopId), String(token));
+}
+
+// Eski ikki GAS/cancelUzumOrder skriptning birlashmasi (CANCELED oqimi):
+//  1-bosqich: Uzum'dan CANCELED buyurtma ID'larini har do'konning saqlangan
+//    sahifa kursoridan yig'ib, yangi ko'rilganlarini lokal holatga "pending"
+//    qilib qo'shadi (data/cancel-state.json — uzum_order sheetga bog'liq emas).
+//  2-bosqich: har bir pending buyurtmani MoySklad'da externalCode orqali topib
+//    (Uzum order ID == MoySklad externalCode), agar allaqachon "himoyalangan"
+//    (yakuniy) holatda bo'lmasa — bekor qilingan holatga o'tkazadi va mas'ul
+//    odamni belgilab Telegram'ga xabar beradi.
+async function run({ moyskladToken }) {
+  const cfg = config.cancelSync;
+  const stats = {
+    newOrders: 0,
+    updated: 0,
+    alreadyDone: 0,
+    waitingMoySklad: 0,
+    givenUp: 0,
+    sweepErrors: 0,
+    msErrors: 0,
+  };
+
+  let cabinets;
+  try {
+    cabinets = parseCabinets(process.env);
+  } catch (e) {
+    logger.error(`Bekor qilish tekshiruvi o'tkazib yuborildi: ${e.message}`);
+    return { errorCount: 1 };
   }
 
-  const candidatesByShop = new Map(); // shopId -> Map(orderId -> rowIndex)
-  for (let i = 1; i < orders.length; i++) {
-    const row = orders[i];
-    const orderId = row[ORD.orderId];
-    const sentToMoySklad = row[ORD.status];
-    const cancelHandled = row[ORD.cancelHandled];
-    if (!orderId || sentToMoySklad != 1 || cancelHandled == 1) continue;
-
-    const shopId = String(cell(row[ORD.shopId]));
-    if (!candidatesByShop.has(shopId)) candidatesByShop.set(shopId, new Map());
-    candidatesByShop.get(shopId).set(String(orderId), i);
+  const dailyLimit = parseInt(process.env.UZUM_DAILY_REQUEST_LIMIT || "500", 10);
+  if (!Number.isInteger(dailyLimit) || dailyLimit < 1) {
+    logger.error("UZUM_DAILY_REQUEST_LIMIT musbat butun son bo'lishi kerak — bekor qilish tekshiruvi o'tkazib yuborildi.");
+    return { errorCount: 1 };
   }
 
-  const rowUpdates = [];
-  let errorCount = 0;
+  const state = cancelState.load();
+  const budget = cancelState.createBudget(state, dailyLimit);
 
-  for (const [shopId, candidates] of candidatesByShop) {
-    const token = shopTokens.get(shopId);
-    if (!token || candidates.size === 0) continue;
-
-    for (let page = 0; page < MAX_PAGES_PER_SHOP && candidates.size > 0; page++) {
-      const pageOrders = await fetchOrdersPage({
-        shopId,
-        shopToken: token,
-        status: "CANCELED",
-        page,
-        size: PAGE_SIZE,
-      });
-
-      if (pageOrders === null) {
-        logger.error(`Uzum'dan bekor qilingan buyurtmalarni olishda xato (shop ${shopId}, sahifa ${page}) — bu do'kon uchun to'xtatildi.`);
-        errorCount++;
-        break;
+  for (const cabinet of cabinets) {
+    try {
+      const { ids, exhausted, newCursors } = await sweepCabinet(cabinet, state.shopCursors, budget, cfg.uzum);
+      Object.assign(state.shopCursors, newCursors);
+      if (exhausted) {
+        logger.error(`"${cabinet.name}": kunlik Uzum so'rov limiti (${dailyLimit}) tugadi — qolgan sahifalar keyingi tsiklda.`);
       }
-      if (pageOrders.length === 0) break;
-
-      for (const o of pageOrders) {
-        const orderId = String(o.id);
-        if (!candidates.has(orderId)) continue;
-
-        const rowIndex = candidates.get(orderId);
-        candidates.delete(orderId);
-        const ok = await handleCanceledOrder({ orders, rowIndex, orderId, moyskladToken, ordersSheetName, rowUpdates });
-        if (!ok) errorCount++;
+      for (const id of ids) {
+        if (!state.orders[id]) {
+          state.orders[id] = { status: "pending", attempts: 0, firstSeenAt: new Date().toISOString() };
+          stats.newOrders++;
+        }
       }
+    } catch (e) {
+      stats.sweepErrors++;
+      logger.error(`"${cabinet.name}" kabinetini o'qishda xato: ${e.message}`);
     }
   }
 
-  if (rowUpdates.length > 0) {
-    await sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId,
-      requestBody: { valueInputOption: "RAW", data: rowUpdates },
-    });
+  const pending = Object.entries(state.orders).filter(([, o]) => o.status === "pending");
+  const runDeadline = Date.now() + cfg.run.maxDurationMs;
+  let processedSinceSave = 0;
+
+  for (const [orderId, order] of pending) {
+    if (Date.now() > runDeadline) {
+      logger.info("Bekor qilish tekshiruvi uchun vaqt byudjeti tugadi — qolgani keyingi tsiklda.");
+      break;
+    }
+
+    try {
+      const msOrder = await moysklad.findByExternalCode(orderId, moyskladToken);
+      const currentStateHref = msOrder?.state?.meta?.href;
+
+      if (!msOrder) {
+        order.attempts++;
+        if (order.attempts >= cfg.moysklad.maxAttemptsPerOrder) {
+          order.status = "failed";
+          order.doneAt = new Date().toISOString();
+          stats.givenUp++;
+          logger.error(`Buyurtma ${orderId}: MoySklad'da ${order.attempts} urinishda ham topilmadi — kuzatuvdan chiqarildi.`);
+        } else {
+          stats.waitingMoySklad++;
+        }
+      } else if (currentStateHref === config.moyskladStates.protectedHref || currentStateHref === config.moyskladStates.canceledHref) {
+        // Allaqachon kerakli/himoyalangan holatda — hech narsa qilinmaydi.
+        order.status = "done";
+        order.doneAt = new Date().toISOString();
+        order.moyskladId = msOrder.id;
+        stats.alreadyDone++;
+      } else if (isDryRun()) {
+        logger.info(`[DRY_RUN] Buyurtma ${orderId}: MoySklad'da bekor qilinardi (${msOrder.id}) va Telegram xabari yuborilardi.`);
+        // order holati o'zgartirilmaydi — DRY_RUN o'chirilgach real urinish qayta sinaladi.
+      } else {
+        await moysklad.setOrderState(moysklad.customerOrderHref(msOrder.id), config.moyskladStates.canceledHref, moyskladToken);
+        order.status = "done";
+        order.doneAt = new Date().toISOString();
+        order.moyskladId = msOrder.id;
+        stats.updated++;
+        logger.info(`Buyurtma ${orderId}: MoySklad'da bekor qilindi (${msOrder.id}).`);
+        await notifyCancellation(orderId);
+      }
+    } catch (e) {
+      stats.msErrors++;
+      logger.error(`Buyurtma ${orderId}: ${e.message}`);
+    }
+
+    processedSinceSave++;
+    if (processedSinceSave >= cfg.run.saveStateEvery) {
+      cancelState.save(state);
+      processedSinceSave = 0;
+    }
+
+    await sleep(cfg.moysklad.requestDelayMs);
   }
+
+  cancelState.prune(state, cfg.state.pruneDays);
+  cancelState.save(state);
+
+  const errorCount = stats.sweepErrors + stats.msErrors + stats.givenUp;
+  logger.info(
+    `Bekor qilish tekshiruvi: ${stats.newOrders} yangi, ${stats.updated} bekor qilindi, ` +
+      `${stats.alreadyDone} allaqachon joyida, ${stats.waitingMoySklad} MoySklad'ni kutmoqda, ${errorCount} xato.`
+  );
 
   return { errorCount };
-}
-
-// rowUpdates'ga Sheets uchun push qiladi VA joriy tsikldan keyin ishga
-// tushadigan bosqichlar (promoteHeldOrders) eskirgan qiymatni ko'rmasligi
-// uchun xotiradagi `orders` massivini ham darhol yangilaydi.
-function markCancelHandled(orders, rowIndex, ordersSheetName, rowUpdates) {
-  const columnLetter = config.columns.orders.cancelHandled;
-  rowUpdates.push({ range: `${ordersSheetName}!${columnLetter}${rowIndex + 1}`, values: [[1]] });
-  orders[rowIndex][ORD.cancelHandled] = 1;
-}
-
-async function handleCanceledOrder({ orders, rowIndex, orderId, moyskladToken, ordersSheetName, rowUpdates }) {
-  const row = orders[rowIndex];
-  const moySkladId = row[ORD.moySkladId];
-  if (!moySkladId) return true;
-
-  const href = moysklad.customerOrderHref(moySkladId);
-
-  try {
-    // GET o'qish uchun xavfsiz — DRY_RUN'da ham bajariladi, faqat keyingi
-    // yozish/xabar qadamlari o'tkazib yuboriladi.
-    const currentStateHref = await moysklad.getOrderStateHref(href, moyskladToken);
-
-    if (currentStateHref === config.moyskladStates.protectedHref) {
-      if (isDryRun()) {
-        logger.info(`[DRY_RUN] Order ${orderId} bekor qilingan, lekin MoySklad'da himoyalangan holatda — tegilmas edi.`);
-        return true;
-      }
-      markCancelHandled(orders, rowIndex, ordersSheetName, rowUpdates);
-      logger.info(`Order ${orderId} Uzum'da bekor qilingan, lekin MoySklad'da himoyalangan holatda — tegilmadi.`);
-      return true;
-    }
-
-    if (isDryRun()) {
-      logger.info(`[DRY_RUN] Order ${orderId} MoySklad'da bekor qilinardi va Telegram xabari yuborilardi.`);
-      return true;
-    }
-
-    await moysklad.setOrderState(href, config.moyskladStates.canceledHref, moyskladToken);
-    markCancelHandled(orders, rowIndex, ordersSheetName, rowUpdates);
-    logger.info(`Order ${orderId} Uzum'da bekor qilingan, MoySklad'da ham bekor qilindi.`);
-
-    const name = process.env.CANCEL_NOTIFY_NAME;
-    const chatId = process.env.CANCEL_NOTIFY_CHAT_ID;
-    const tag = name && chatId ? `<a href="tg://user?id=${chatId}">${escapeHtml(name)}</a>` : "";
-    await sendTelegramMessage({
-      text: `❌ Buyurtma bekor qilindi: ${escapeHtml(orderId)}${tag ? "\n" + tag : ""}`,
-      parseMode: "HTML",
-    });
-    return true;
-  } catch (e) {
-    logger.error(`Order ${orderId} bekor qilishni sinxronlashda xato: ${e.message}`);
-    return false;
-  }
 }
 
 module.exports = { run };

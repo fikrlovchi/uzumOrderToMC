@@ -3,8 +3,7 @@
   "credentialsPath": "./credentials.json",
   "sheets": {
     "orders": "uzum_order",
-    "details": "uzum_order_detail",
-    "shops": "uzum_shop"
+    "details": "uzum_order_detail"
   },
   "columns": {
     "orders": {
@@ -42,5 +41,26 @@
     "confirmedHref": "https://api.moysklad.ru/api/remap/1.2/entity/customerorder/metadata/states/a4798772-97e3-11ed-0a80-0ca1009761c5",
     "canceledHref": "https://api.moysklad.ru/api/remap/1.2/entity/customerorder/metadata/states/a47989ee-97e3-11ed-0a80-0ca1009761c9",
     "protectedHref": "https://api.moysklad.ru/api/remap/1.2/entity/customerorder/metadata/states/e3f3673f-8cc0-11f0-0a80-17c2003635fe"
+  },
+  "cancelSync": {
+    "uzum": {
+      "baseUrl": "https://api-seller.uzum.uz/api/seller-openapi",
+      "status": "CANCELED",
+      "scheme": "FBS",
+      "pageSize": 50,
+      "maxPagesPerSweep": 40,
+      "maxRetry": 3
+    },
+    "moysklad": {
+      "maxAttemptsPerOrder": 100,
+      "requestDelayMs": 250
+    },
+    "state": {
+      "pruneDays": 30
+    },
+    "run": {
+      "maxDurationMs": 60000,
+      "saveStateEvery": 20
+    }
   }
 }

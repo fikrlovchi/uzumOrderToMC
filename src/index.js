@@ -218,7 +218,9 @@ async function createMoySkladOrders() {
   // Bekor qilish → oyna tugagach ko'tarish → yangi tasdiqlash+holat o'rnatish
   // tartibida: bir xil tsiklda bekor qilingan buyurtma hech qachon keyingi
   // bosqichlar tomonidan qayta "tasdiqlangan" holatga qaytarilmasin.
-  const cancelResult = await cancelSync.run({ sheets, orders, moyskladToken: token });
+  // cancelSync endi mustaqil (o'z lokal holati + MoySklad'ni externalCode
+  // orqali qidirish orqali ishlaydi), shu sababli sheet/orders kerak emas.
+  const cancelResult = await cancelSync.run({ moyskladToken: token });
   errorCount += cancelResult.errorCount;
 
   const promoteResult = await orderStatusSync.promoteHeldOrders({ sheets, orders, moyskladToken: token });

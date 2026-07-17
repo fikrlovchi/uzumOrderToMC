@@ -7,28 +7,36 @@ sifatida yaratadi. Google Apps Script kodining Node.js versiyasi.
 
 Har 2 daqiqada, bitta ishga tushirishda ketma-ket:
 
-1. **Uzum'dan yangi buyurtmalarni olish** (`src/orderFetch.js`) — har bir do'kon
-   (`uzum_shop`) uchun `CREATED` holatidagi buyurtmalarni sahifalab so'raydi,
-   yangilarini `uzum_order`/`uzum_order_detail`ga qo'shadi. **uzbuyo@gmail.com**
-   OAuth akkaunti nomidan yozadi (pastga qarang), service account emas.
+1. **Uzum'dan yangi buyurtmalarni olish** (`src/orderFetch.js`) — har bir
+   do'kon (`.env`dagi `UZUM_TOKEN_*`/`UZUM_SHOP_*`) uchun `CREATED` holatidagi
+   buyurtmalarni sahifalab so'raydi, yangilarini `uzum_order`/
+   `uzum_order_detail`ga qo'shadi. **uzbuyo@gmail.com** OAuth akkaunti
+   nomidan yozadi (pastga qarang), service account emas.
 2. **MoySklad'da yaratish** — `Q` ustuni (status) `1` bo'lmagan qatorlarni
    `uzum_order_detail`dan yig'ib, MoySklad'ga `customerorder` sifatida POST
    qiladi; muvaffaqiyatli bo'lsa `Q`=1 va `S`=MoySklad ID yoziladi.
-3. **Bekor qilishni sinxronlash** (`src/cancelSync.js`) — `Q`=1 va hali
-   bekor-qilish-tekshiruvi o'tkazilmagan (`V` bo'sh) buyurtmalar uchun Uzum'dan
-   `CANCELED` ro'yxatini so'raydi; topilsa MoySklad holatini bekor qilingan
-   qilib qo'yadi (agar MoySklad allaqachon "himoyalangan" holatda bo'lmasa) va
-   Telegram'ga xabar yuboradi.
+3. **Bekor qilishni sinxronlash** (`src/cancelSync.js`) — o'zining mustaqil
+   lokal holati (`data/cancel-state.json`, sheetga bog'liq emas) orqali
+   Uzum'dan `CANCELED` ro'yxatini har do'konning saqlangan sahifa kursoridan
+   sahifalab o'qiydi, har bir buyurtmani MoySklad'da `externalCode` orqali
+   topadi; agar allaqachon "himoyalangan" holatda bo'lmasa — bekor qilingan
+   holatga o'tkazadi va mas'ul odamni belgilab Telegram'ga xabar beradi.
 4. **Kutish oynasidan chiqarish** (`src/orderStatusSync.js`) — Toshkent vaqti
    bilan `WINDOW_HOLD_END`dan o'tgan bo'lsa, hali "kutish" holatida (`U`=`hold`)
-   turgan buyurtmalarni "tasdiqlangan" holatga o'tkazadi.
-5. **Yangi buyurtmalarni Uzum'da tasdiqlash + MoySklad holatini o'rnatish** —
-   `Q`=1 va hali tasdiqlanmagan (`T` bo'sh) buyurtmalarni Uzum'da tasdiqlaydi
-   (CREATED→PACKING), so'ng joriy vaqtga qarab MoySklad holatini "kutish" yoki
-   "tasdiqlangan" qilib qo'yadi.
+   turgan buyurtmalarni Uzum'da tasdiqlaydi va MoySklad holatini
+   "tasdiqlangan"ga o'tkazadi.
+5. **Yangi buyurtmalarni tekshirish** — `Q`=1 va hali qayta ishlanmagan
+   buyurtmalar uchun: agar joriy vaqt kutish oynasida (`WINDOW_HOLD_START`..
+   `WINDOW_HOLD_END`) bo'lsa, **Uzum'da hali tasdiqlanmaydi** — faqat MoySklad
+   holati "kutish"ga o'rnatiladi (Uzum tasdiqlash + MoySklad "tasdiqlangan"ga
+   o'tkazish ikkalasi ham oyna tugagach, 4-qadamda, birga amalga oshadi).
+   Oyna tashqarisida bo'lsa, ikkalasi darhol bir vaqtda bajariladi.
 
 MoySklad tokeni `.env`dagi `MOYSKLAD_TOKEN`dan olinadi — `fikrlovchi-panel`
 "O'zgaruvchilar" sahifasidan markazlashtirilgan holda boshqariladi.
+
+> `uzum_order!V` (`cancelHandled`) ustuni endi ishlatilmaydi — bekor qilishni
+> kuzatish butunlay `data/cancel-state.json`ga ko'chirilgan (pastga qarang).
 
 ## Kerakli fayllar
 
@@ -69,11 +77,30 @@ avtomatik "tasdiqlangan"ga o'tadi. `CANCEL_NOTIFY_NAME`/`CHAT_ID` — bekor
 qilingan buyurtma haqida Telegram xabarida belgilanadigan (tag qilinadigan)
 mas'ul odam.
 
-### `uzum_shop` varag'i
+### Uzum kabinetlari/do'konlari (`.env`)
 
-`A`=shopId, `B`=do'kon nomi, `C`=Uzum Seller API tokeni. Har bir do'kon uchun
-shu yerda token bo'lishi kerak — bo'lmasa, shu do'kon uchun import/tasdiqlash/
-bekor-qilish tekshiruvi jimgina o'tkazib yuboriladi (xato sifatida loglanadi).
+`uzum_shop` Google Sheet'i "manba" hisoblanadi (odamlar shu yerda tahrirlaydi),
+lekin kod faqat `.env`ni o'qiydi — shu sheetdagi qiymatlar quyidagi naqsh
+bo'yicha `.env`ga import qilinishi kerak (qo'lda yoki alohida sinxronizatsiya
+orqali):
+```
+UZUM_TOKEN_<KABINET>=token
+UZUM_SHOP_<KABINET>_<BELGI>=shopId
+```
+Bitta kabinetga istalgancha do'kon qo'shsa bo'ladi. Do'kon uchun token
+topilmasa, shu do'kon uchun import/tasdiqlash/bekor-qilish tekshiruvi jimgina
+o'tkazib yuboriladi (xato sifatida loglanadi).
+
+### `cancelUzumOrder` loyihasini birlashtirish
+
+Bekor qilishni aniqlash mantig'i ilgari alohida `cancelUzumOrder` servisi
+sifatida ishlar edi (o'zining kunlik so'rov limiti, sahifa-kursori va
+`externalCode` orqali MoySklad qidiruvi bilan). Bu mantiq endi to'liq shu
+loyihaga ko'chirilgan (`src/cancelState.js`, `src/uzumCabinets.js`,
+`src/uzumCancelSweep.js`, `src/cancelSync.js`). **Shu funksiya serverda
+ishga tushirilgach, eski `cancelUzumOrder` systemd timer'ini o'chiring**
+— aks holda ikkalasi bir vaqtda MoySklad'ga yozib, keraksiz ravishda
+ustma-ust ishlaydi.
 
 ### Birinchi marta ishga tushirish — DRY_RUN
 
