@@ -112,7 +112,11 @@ async function run({ sheets, orders }) {
 
     // 24 soatdan oshgan buyurtma — Uzum'ga so'rov yubormasdan avtomatik yopamiz.
     if (arrivedMs != null && now - arrivedMs > MONITOR_WINDOW_MS) {
-      markCancelHandled(orders, i, ordersSheetName, rowUpdates);
+      if (isDryRun()) {
+        logger.info(`[DRY_RUN] Order ${orderId} 24 soatdan o'tgan — V=1 qilinardi.`);
+      } else {
+        markCancelHandled(orders, i, ordersSheetName, rowUpdates);
+      }
       autoFlaggedCount++;
       continue;
     }

@@ -10,6 +10,7 @@ const orderFetch = require("./orderFetch");
 const cancelSync = require("./cancelSync");
 const orderStatusSync = require("./orderStatusSync");
 const moysklad = require("./moysklad");
+const { isDryRun } = require("./dryRun");
 
 const ORD = Object.fromEntries(
   Object.entries(config.columns.orders).map(([k, v]) => [k, colLetterToIndex(v)])
@@ -187,6 +188,11 @@ async function createMoySkladOrders() {
     }
 
     const payload = buildPayload(order, orderId, trackingNumber, positions, config.moysklad);
+
+    if (isDryRun()) {
+      logger.info(`[DRY_RUN] Order ${orderId} MoySklad'da yaratilardi (${positions.length} pozitsiya).`);
+      continue;
+    }
 
     try {
       const response = await fetch(MOYSKLAD_ORDER_URL, {
