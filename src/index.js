@@ -10,6 +10,7 @@ const skuAlerts = require("./skuAlerts");
 const orderFetch = require("./orderFetch");
 const cancelSync = require("./cancelSync");
 const orderStatusSync = require("./orderStatusSync");
+const moysklad = require("./moysklad");
 
 const ORD = Object.fromEntries(
   Object.entries(config.columns.orders).map(([k, v]) => [k, colLetterToIndex(v)])
@@ -205,6 +206,22 @@ async function createMoySkladOrders() {
         order[ORD.moySkladId] = moySkladId;
         logger.info(`Order ${orderId} muvaffaqiyatli yaratildi (${moySkladId}).`);
         successCount++;
+      } else if (resText.includes('"code" : 3006')) {
+        // Bu buyurtma avvalgi (masalan uzilib qolgan) tsiklda MoySklad'da
+        // allaqachon yaratilgan, lekin sheetga Q/S yozilmagan edi. Qayta
+        // yaratishga urinish o'rniga, mavjudini externalCode orqali topib,
+        // sheetni orqasidan to'ldiramiz.
+        const existing = await moysklad.findByExternalCode(orderId, token);
+        if (existing) {
+          await markRowSent(sheets, spreadsheetId, ordersSheetName, i + 1, existing.id);
+          order[ORD.status] = 1;
+          order[ORD.moySkladId] = existing.id;
+          logger.info(`Order ${orderId} MoySklad'da allaqachon bor edi (${existing.id}) — sheet to'ldirildi.`);
+          successCount++;
+        } else {
+          logger.error(`Order ${orderId} xatolik: ${resText}`);
+          errorCount++;
+        }
       } else {
         logger.error(`Order ${orderId} xatolik: ${resText}`);
         errorCount++;
