@@ -1,6 +1,5 @@
 {
   "spreadsheetId": "18j8NDVJl9ZD-wuwlP3T1A1-sVoJlW_doFrwQrf-AvsE",
-  "credentialsPath": "./credentials.json",
   "sheets": {
     "orders": "uzum_order",
     "details": "uzum_order_detail"
@@ -25,7 +24,8 @@
       "orderId": "H",
       "product": "I",
       "entityType": "J",
-      "quantity": "K"
+      "quantity": "K",
+      "priceIsTotal": "L"
     }
   },
   "moysklad": {
@@ -50,7 +50,7 @@
       "pageSize": 50,
       "maxLookbackDays": 30,
       "maxPagesPerSweep": 40,
-      "shallowMaxPages": 3,
+      "shallowMaxPages": 8,
       "deepSweepIntervalMs": 3600000,
       "maxRetry": 3,
       "requestDelayMs": 300

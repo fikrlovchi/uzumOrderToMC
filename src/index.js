@@ -1,9 +1,8 @@
 require("dotenv").config();
 
-const path = require("path");
-const { google } = require("googleapis");
 const config = require("../config.json");
 const { colLetterToIndex, formatDateTimeGMT5 } = require("./sheetsUtil");
+const { getSheetsClient } = require("./oauthSheets");
 const logger = require("./logger");
 const reporter = require("./reporter");
 const skuAlerts = require("./skuAlerts");
@@ -63,11 +62,15 @@ function buildPositions(details, orderId) {
     let entityType = cell(row[DET.entityType]).toString().trim().toLowerCase() || "product";
     const prodHref = toHref(row[DET.product], entityType);
 
+    // uzum_order_detail!L (priceIsTotal) shu qatorning narxi umumiy summami
+    // (TRUE — miqdor 1, narx E'dagi qiymat) yoki birlik narximi (FALSE —
+    // haqiqiy miqdor yuboriladi, MoySklad narx x miqdorni o'zi hisoblaydi)
+    // ekanini belgilaydi.
+    const priceIsTotal = row[DET.priceIsTotal] === true || row[DET.priceIsTotal] === "TRUE";
+    const quantity = priceIsTotal ? 1 : parseFloat(row[DET.quantity]);
+
     positions.push({
-      // uzum_order_detail!E allaqachon shu qatorning umumiy summasi (birlik
-      // narxi emas), shuning uchun miqdor 1 qilib yuboriladi, aks holda
-      // MoySklad'da narx x haqiqiy miqdor bo'lib ikki marta ko'payib ketardi.
-      quantity: 1,
+      quantity,
       price: parseFloat(row[DET.price]) * 100,
       reserve: entityType === "service" ? 0 : 1,
       assortment: {
@@ -134,11 +137,10 @@ async function createMoySkladOrders() {
   let successCount = 0;
   let errorCount = 0;
 
-  const auth = new google.auth.GoogleAuth({
-    keyFile: path.join(__dirname, "..", config.credentialsPath),
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-  });
-  const sheets = google.sheets({ version: "v4", auth });
+  // Google Sheets'ga barcha o'qish/yozishlar uzbuyo@gmail.com (OAuth) nomidan
+  // amalga oshadi — service account (credentials.json) endi sheet uchun
+  // ishlatilmaydi.
+  const sheets = getSheetsClient();
   const spreadsheetId = config.spreadsheetId;
   const ordersSheetName = config.sheets.orders;
   const detailsSheetName = config.sheets.details;

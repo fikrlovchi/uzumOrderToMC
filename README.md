@@ -10,17 +10,19 @@ Har 2 daqiqada, bitta ishga tushirishda ketma-ket:
 1. **Uzum'dan yangi buyurtmalarni olish** (`src/orderFetch.js`) — har bir
    do'kon (`.env`dagi `UZUM_TOKEN_*`/`UZUM_SHOP_*`) uchun `CREATED` holatidagi
    buyurtmalarni sahifalab so'raydi, yangilarini `uzum_order`/
-   `uzum_order_detail`ga qo'shadi. **uzbuyo@gmail.com** OAuth akkaunti
-   nomidan yozadi (pastga qarang), service account emas.
+   `uzum_order_detail`ga qo'shadi.
 2. **MoySklad'da yaratish** — `Q` ustuni (status) `1` bo'lmagan qatorlarni
    `uzum_order_detail`dan yig'ib, MoySklad'ga `customerorder` sifatida POST
    qiladi; muvaffaqiyatli bo'lsa `Q`=1 va `S`=MoySklad ID yoziladi.
-3. **Bekor qilishni sinxronlash** (`src/cancelSync.js`) — o'zining mustaqil
-   lokal holati (`data/cancel-state.json`, sheetga bog'liq emas) orqali
-   Uzum'dan `CANCELED` ro'yxatini har do'konning saqlangan sahifa kursoridan
-   sahifalab o'qiydi, har bir buyurtmani MoySklad'da `externalCode` orqali
-   topadi; agar allaqachon "himoyalangan" holatda bo'lmasa — bekor qilingan
-   holatga o'tkazadi va mas'ul odamni belgilab Telegram'ga xabar beradi.
+   `uzum_order_detail!L` (`priceIsTotal`) `TRUE` bo'lsa `E` ustunidagi narx
+   qatorning umumiy summasi sifatida (miqdor=1) yuboriladi; `FALSE` bo'lsa —
+   birlik narxi sifatida (haqiqiy miqdor bilan birga).
+3. **Bekor qilishni sinxronlash** (`src/cancelSync.js`, boshqa hamma
+   bosqichdan OLDIN) — o'zining mustaqil lokal holati (`data/cancel-state.json`,
+   sheetga bog'liq emas) orqali Uzum'dan `CANCELED` ro'yxatini o'qiydi, har
+   bir buyurtmani MoySklad'da `externalCode` orqali topadi; agar allaqachon
+   "himoyalangan" holatda bo'lmasa — bekor qilingan holatga o'tkazadi va
+   mas'ul odamni belgilab Telegram'ga xabar beradi.
 4. **Kutish oynasidan chiqarish** (`src/orderStatusSync.js`) — Toshkent vaqti
    bilan `WINDOW_HOLD_END`dan o'tgan bo'lsa, hali "kutish" holatida (`U`=`hold`)
    turgan buyurtmalarni Uzum'da tasdiqlaydi va MoySklad holatini
@@ -43,17 +45,17 @@ MoySklad tokeni `.env`dagi `MOYSKLAD_TOKEN`dan olinadi — `fikrlovchi-panel`
 | Fayl | Izoh |
 |------|------|
 | `config.json` | Spreadsheet ID, varaq/ustun nomlari, MoySklad havolalari/holatlari. Git'da bor. |
-| `credentials.json` | Google service account kaliti (o'qish/asosiy yozishlar uchun). **Git'ga tushmaydi.** |
-| `oauth.json` | `uzbuyo@gmail.com` OAuth2 kalitlari (faqat yangi buyurtma import qilishda yozish uchun). **Git'ga tushmaydi.** |
+| `oauth.json` | `uzbuyo@gmail.com` OAuth2 kalitlari — Google Sheets'ga **barcha** o'qish/yozish shu orqali (service account endi ishlatilmaydi). **Git'ga tushmaydi.** |
 | `.env` | `MOYSKLAD_TOKEN` (majburiy), oyna/mas'ul-odam sozlamalari, `fikrlovchi-panel`/Telegram (ixtiyoriy). **Git'ga tushmaydi.** |
 
 ## Buyurtma status sinxronizatsiyasi — sozlash
 
-### `oauth.json` (yangi buyurtmalarni import qilish uchun)
+### `oauth.json` (Google Sheets — yagona ulanish usuli)
 
-Bu qism `uzbuyo@gmail.com` nomidan yozishi kerak (service account'da emas), chunki
-sheet'ning asl egasi shu akkaunt. Loyihada bu maqsad uchun allaqachon ishlayotgan
-kalit bor — uni shunchaki nusxalash kifoya:
+Google Sheets'ga barcha o'qish/yozishlar `uzbuyo@gmail.com` nomidan amalga
+oshadi (`credentials.json`/service account endi umuman kerak emas). Loyihada
+bu maqsad uchun allaqachon ishlayotgan kalit bor — uni shunchaki nusxalash
+kifoya:
 
 ```bash
 cp ../uzumPDFs/oauth.json ./oauth.json

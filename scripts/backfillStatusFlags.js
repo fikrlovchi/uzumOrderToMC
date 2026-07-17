@@ -11,10 +11,9 @@
 //
 // Ishlatilishi: node scripts/backfillStatusFlags.js
 require("dotenv").config();
-const path = require("path");
-const { google } = require("googleapis");
 const config = require("../config.json");
 const { colLetterToIndex } = require("../src/sheetsUtil");
+const { getSheetsClient } = require("../src/oauthSheets");
 
 const ORD = Object.fromEntries(
   Object.entries(config.columns.orders).map(([k, v]) => [k, colLetterToIndex(v)])
@@ -23,11 +22,7 @@ const ORD = Object.fromEntries(
 const CHUNK_SIZE = 500;
 
 async function main() {
-  const auth = new google.auth.GoogleAuth({
-    keyFile: path.join(__dirname, "..", config.credentialsPath),
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-  });
-  const sheets = google.sheets({ version: "v4", auth });
+  const sheets = getSheetsClient();
   const spreadsheetId = config.spreadsheetId;
   const ordersSheetName = config.sheets.orders;
 
