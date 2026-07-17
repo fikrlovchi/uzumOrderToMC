@@ -7,6 +7,11 @@ const { parseCabinets, buildShopTokenMap } = require("./uzumCabinets");
 const moysklad = require("./moysklad");
 const { isDryRun } = require("./dryRun");
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Uzum'ning haqiqiy tezlik-limiti (token-bucket: 2/soniya) — cancelSync bilan
+// bir xil tanaffusdan foydalanamiz, chunki bu bitta umumiy API cheklovi.
+const REQUEST_DELAY_MS = config.cancelSync?.uzum?.requestDelayMs || 600;
+
 const ORD = Object.fromEntries(
   Object.entries(config.columns.orders).map(([k, v]) => [k, colLetterToIndex(v)])
 );
@@ -56,6 +61,8 @@ async function confirmOnUzum({ orders, rowIndex, orderId, shopTokens, rowUpdates
   } catch (e) {
     logger.error(`Order ${orderId} Uzum'da tasdiqlanmadi: ${e.message}`);
     return false;
+  } finally {
+    await sleep(REQUEST_DELAY_MS);
   }
 }
 

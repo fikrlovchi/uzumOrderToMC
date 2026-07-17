@@ -51,7 +51,7 @@ async function run({ moyskladToken }) {
     return { errorCount: 1 };
   }
 
-  const dailyLimit = parseInt(process.env.UZUM_DAILY_REQUEST_LIMIT || "500", 10);
+  const dailyLimit = parseInt(process.env.UZUM_DAILY_REQUEST_LIMIT || "50000", 10);
   if (!Number.isInteger(dailyLimit) || dailyLimit < 1) {
     logger.error("UZUM_DAILY_REQUEST_LIMIT musbat butun son bo'lishi kerak — bekor qilish tekshiruvi o'tkazib yuborildi.");
     return { errorCount: 1 };

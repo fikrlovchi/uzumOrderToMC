@@ -53,7 +53,7 @@
       "shallowMaxPages": 8,
       "deepSweepIntervalMs": 3600000,
       "maxRetry": 3,
-      "requestDelayMs": 300
+      "requestDelayMs": 600
     },
     "moysklad": {
       "maxAttemptsPerOrder": 100,
