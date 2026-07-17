@@ -17,12 +17,14 @@ Har 2 daqiqada, bitta ishga tushirishda ketma-ket:
    `uzum_order_detail!L` (`priceIsTotal`) `TRUE` bo'lsa `E` ustunidagi narx
    qatorning umumiy summasi sifatida (miqdor=1) yuboriladi; `FALSE` bo'lsa —
    birlik narxi sifatida (haqiqiy miqdor bilan birga).
-3. **Bekor qilishni sinxronlash** (`src/cancelSync.js`, boshqa hamma
-   bosqichdan OLDIN) — o'zining mustaqil lokal holati (`data/cancel-state.json`,
-   sheetga bog'liq emas) orqali Uzum'dan `CANCELED` ro'yxatini o'qiydi, har
-   bir buyurtmani MoySklad'da `externalCode` orqali topadi; agar allaqachon
-   "himoyalangan" holatda bo'lmasa — bekor qilingan holatga o'tkazadi va
-   mas'ul odamni belgilab Telegram'ga xabar beradi.
+3. **Bekor qilishni tekshirish** (`src/cancelSync.js`, boshqa hamma
+   bosqichdan OLDIN) — `Q`=1 va `V` (`cancelHandled`) hali bo'sh bo'lgan har
+   bir buyurtma uchun: avval MoySklad holatini `S` orqali tekshiradi (arzon
+   so'rov) — allaqachon "himoyalangan" holatda bo'lsa, `V`=1 qilib to'xtatadi.
+   Aks holda, Uzum'dan **aynan shu bitta buyurtmaning** joriy holatini so'raydi
+   (butun `CANCELED` ro'yxatini emas). Uzum statusi `CANCELED` bo'lsa — mas'ul
+   odamlarni belgilab Telegram'ga xabar beradi va `V`=1 qilib qo'yadi (MoySklad
+   holatini bu yerda o'zgartirmaydi — faqat ogohlantiradi va belgilaydi).
 4. **Kutish oynasidan chiqarish** (`src/orderStatusSync.js`) — Toshkent vaqti
    bilan `WINDOW_HOLD_END`dan o'tgan bo'lsa, hali "kutish" holatida (`U`=`hold`)
    turgan buyurtmalarni Uzum'da tasdiqlaydi va MoySklad holatini
@@ -36,9 +38,6 @@ Har 2 daqiqada, bitta ishga tushirishda ketma-ket:
 
 MoySklad tokeni `.env`dagi `MOYSKLAD_TOKEN`dan olinadi — `fikrlovchi-panel`
 "O'zgaruvchilar" sahifasidan markazlashtirilgan holda boshqariladi.
-
-> `uzum_order!V` (`cancelHandled`) ustuni endi ishlatilmaydi — bekor qilishni
-> kuzatish butunlay `data/cancel-state.json`ga ko'chirilgan (pastga qarang).
 
 ## Kerakli fayllar
 
@@ -69,15 +68,16 @@ cp ../uzumPDFs/oauth.json ./oauth.json
 ```
 WINDOW_HOLD_START=06:10
 WINDOW_HOLD_END=11:00
-CANCEL_NOTIFY_NAME=...
-CANCEL_NOTIFY_CHAT_ID=...
+CANCEL_NOTIFY_CONTACTS=Ismi:chatId,Ismi2:chatId2
 ```
 
 `WINDOW_HOLD_START`/`END` — Toshkent vaqti bilan, shu oraliqda tasdiqlangan
 buyurtmalar MoySklad'da vaqtincha "kutish" holatida turadi, oyna tugagach
-avtomatik "tasdiqlangan"ga o'tadi. `CANCEL_NOTIFY_NAME`/`CHAT_ID` — bekor
-qilingan buyurtma haqida Telegram xabarida belgilanadigan (tag qilinadigan)
-mas'ul odam.
+avtomatik "tasdiqlangan"ga o'tadi. `CANCEL_NOTIFY_CONTACTS` — bekor qilingan
+buyurtma haqida Telegram xabarida belgilanadigan (tag qilinadigan) mas'ul
+odamlar; bir nechtasi vergul bilan ajratiladi. Har bir odam kamida bir marta
+botga yozgan bo'lishi kerak, aks holda `tg://user?id=` belgilash haqiqiy
+bildirishnoma bermaydi (Telegram'ning o'z cheklovi).
 
 ### Uzum kabinetlari/do'konlari (`.env`)
 
@@ -93,34 +93,22 @@ Bitta kabinetga istalgancha do'kon qo'shsa bo'ladi. Do'kon uchun token
 topilmasa, shu do'kon uchun import/tasdiqlash/bekor-qilish tekshiruvi jimgina
 o'tkazib yuboriladi (xato sifatida loglanadi).
 
-### `cancelUzumOrder` loyihasini birlashtirish
+### Nima uchun Uzum'ning bulk `CANCELED` ro'yxati emas
 
-Bekor qilishni aniqlash mantig'i ilgari alohida `cancelUzumOrder` servisi
-sifatida ishlar edi (o'zining kunlik so'rov limiti, sahifa-kursori va
-`externalCode` orqali MoySklad qidiruvi bilan). Bu mantiq endi to'liq shu
-loyihaga ko'chirilgan (`src/cancelState.js`, `src/uzumCabinets.js`,
-`src/uzumCancelSweep.js`, `src/cancelSync.js`). **Shu funksiya serverda
-ishga tushirilgach, eski `cancelUzumOrder` xizmatini (va agar Apps
-Script'da alohida trigger sifatida ham qolgan bo'lsa — uni ham) o'chiring**
-— aks holda bir nechta jarayon bir vaqtda Uzum/MoySklad'ga so'rov yuborib,
-tezlik-limitiga (429) tez uchraydi.
-
-**Muhim topilma:** Uzum'ning CANCELED ro'yxati buyurtmaning bekor qilingan
+Dastlab bekor qilishni aniqlash Uzum'ning butun `CANCELED` ro'yxatini
+sahifalab o'qish orqali qilingan edi (`cancelUzumOrder` alohida servisidan
+ko'chirilgan). Amalda tekshirilganda bu ro'yxat buyurtmaning bekor qilingan
 sanasi (`dateCancelled`) emas, balki **yaratilgan sanasi (`dateCreated`)
-bo'yicha kamayish tartibida** qaytadi (tekshirilgan). Bu degani — sahifalar
-vaqt o'tishi bilan "muhrlanmaydi": ancha oldin yaratilgan buyurtma bugun
-bekor qilinsa, u ro'yxatning chuqur qismida joylashaveradi. Shuning uchun
-saqlangan sahifa kursori ishlatilmaydi (buyurtmalarni o'tkazib yuborishi
-mumkin edi). O'rniga ikki qatlamli skanerlash:
-- **Har tsiklda (2 daqiqa) yengil skanerlash** — `shallowMaxPages` (standart 3)
-  sahifagacha, yaqinda yaratilgan buyurtmaning bekor qilinishini tez ushlaydi.
-- **`deepSweepIntervalMs`da (standart 1 soat) bir marta chuqur skanerlash** —
-  `maxLookbackDays` (standart 30 kun) gacha to'liq, ancha oldin yaratilgan
-  buyurtma hozir bekor qilingan kamdan-kam holatni ushlaydi.
+bo'yicha kamayish tartibida** qaytishi aniqlandi — bu degani sahifalar vaqt
+o'tishi bilan "muhrlanmaydi" (ancha oldin yaratilgan buyurtma bugun bekor
+qilinsa, u ro'yxatning chuqur qismida joylashaveradi), va bu ro'yxat vaqt
+o'tishi bilan cheksiz kattalashib boradi.
 
-Ikkalasi ham sahifadagi eng eski yozuvning `dateCreated`i `maxLookbackDays`dan
-eskirganda to'xtaydi — ro'yxat shu tartibda ekan, undan naryog'i ham albatta
-eskiroq bo'ladi.
+Shuning uchun butunlay boshqa yondashuvga o'tildi: Uzum'ning bulk ro'yxatini
+umuman o'qimasdan, **faqat bizning o'z buyurtmalarimiz** (`uzum_order!V` hali
+bo'sh bo'lganlari) uchun, har biriga alohida (`GET /v1/fbs/order/{id}`) so'rov
+yuboriladi — bu ham to'g'ri (o'tkazib yubormaydi), ham ancha kam so'rov talab
+qiladi (faqat hali "yakunlanmagan" buyurtmalar soncha, butun tarix emas).
 
 ### Birinchi marta ishga tushirish — DRY_RUN
 
@@ -210,16 +198,11 @@ sudo apt-get install -y nodejs
 which node   # ExecStart uchun yo'lni eslab qoling
 ```
 
-### 4. `credentials.json` ni joylash
+### 4. `oauth.json` ni joylash
 
-Lokal kompyuterdan serverga xavfsiz nusxalang (git'ga qo'ymang):
-
-```bash
-scp credentials.json USER@SERVER:/opt/uzumOrderToMC/credentials.json
-```
-
-Service account email'iga (`credentials.json` -> `client_email`) Google Sheet'da
-**Editor** huquqi berilganiga ishonch hosil qiling.
+Yuqoridagi "Buyurtma status sinxronizatsiyasi — sozlash" bo'limiga qarang
+(`uzumPDFs/oauth.json`dan nusxalash kifoya — alohida OAuth consent kerak
+emas).
 
 ### 5. systemd service va timer o'rnatish
 

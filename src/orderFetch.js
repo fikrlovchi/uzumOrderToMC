@@ -8,7 +8,7 @@ const { isDryRun } = require("./dryRun");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Uzum'ning haqiqiy tezlik-limiti (token-bucket: 2/soniya) — cancelSync bilan
 // bir xil tanaffusdan foydalanamiz, chunki bu bitta umumiy API cheklovi.
-const REQUEST_DELAY_MS = config.cancelSync?.uzum?.requestDelayMs || 600;
+const REQUEST_DELAY_MS = config.cancelSync?.requestDelayMs || 600;
 
 // Uzum'dan CREATED holatidagi yangi buyurtmalarni olib, uzum_order/
 // uzum_order_detail'ga qo'shadi. uzbuyo@gmail.com OAuth akkaunti nomidan

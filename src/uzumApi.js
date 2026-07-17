@@ -39,4 +39,21 @@ async function confirmOrder({ shopToken, orderId }) {
   }
 }
 
-module.exports = { fetchOrdersPage, confirmOrder };
+// Bitta buyurtmaning joriy holatini so'raydi (bekor qilinganini tekshirish
+// uchun) — Uzum'ning butun CANCELED ro'yxatini sahifalab o'qishdan farqli
+// o'laroq, faqat bitta buyurtma haqida so'rov yuboradi.
+async function getOrderStatus({ shopToken, orderId }) {
+  const response = await fetch(`${BASE_URL}/v1/fbs/order/${orderId}`, {
+    headers: { Authorization: shopToken },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Uzum buyurtma holatini so'rashda xato (${response.status}): ${text}`);
+  }
+
+  const json = await response.json();
+  return json?.payload || null;
+}
+
+module.exports = { fetchOrdersPage, confirmOrder, getOrderStatus };

@@ -43,28 +43,9 @@
     "protectedHref": "https://api.moysklad.ru/api/remap/1.2/entity/customerorder/metadata/states/e3f3673f-8cc0-11f0-0a80-17c2003635fe"
   },
   "cancelSync": {
-    "uzum": {
-      "baseUrl": "https://api-seller.uzum.uz/api/seller-openapi",
-      "status": "CANCELED",
-      "scheme": "FBS",
-      "pageSize": 50,
-      "maxLookbackDays": 30,
-      "maxPagesPerSweep": 40,
-      "shallowMaxPages": 8,
-      "deepSweepIntervalMs": 3600000,
-      "maxRetry": 3,
-      "requestDelayMs": 600
-    },
-    "moysklad": {
-      "maxAttemptsPerOrder": 100,
-      "requestDelayMs": 250
-    },
-    "state": {
-      "pruneDays": 30
-    },
+    "requestDelayMs": 600,
     "run": {
-      "maxDurationMs": 60000,
-      "saveStateEvery": 20
+      "maxDurationMs": 60000
     }
   }
 }
