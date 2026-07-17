@@ -49,7 +49,8 @@
       "scheme": "FBS",
       "pageSize": 50,
       "maxPagesPerSweep": 40,
-      "maxRetry": 3
+      "maxRetry": 3,
+      "requestDelayMs": 300
     },
     "moysklad": {
       "maxAttemptsPerOrder": 100,

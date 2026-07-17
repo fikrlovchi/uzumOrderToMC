@@ -83,6 +83,7 @@ async function sweepShop(cabinet, shopId, startPage, budget, cfg, ids) {
     }
 
     page++;
+    if (cfg.requestDelayMs) await sleep(cfg.requestDelayMs);
   }
 
   return { cursor: page, exhausted: false, capped: true };
@@ -114,6 +115,8 @@ async function sweepCabinet(cabinet, cursors, budget, cfg) {
     } catch (e) {
       logger.error(`"${cabinet.name}" do'kon ${shopId} skanerlashda xato: ${e.message}`);
     }
+
+    if (cfg.requestDelayMs) await sleep(cfg.requestDelayMs);
   }
 
   return { ids, exhausted, newCursors };
