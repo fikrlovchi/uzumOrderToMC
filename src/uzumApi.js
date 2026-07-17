@@ -56,4 +56,39 @@ async function getOrderStatus({ shopToken, orderId }) {
   return json?.payload || null;
 }
 
-module.exports = { fetchOrdersPage, confirmOrder, getOrderStatus };
+// Buyurtmani Uzum'da bekor qiladi (MoySklad'da operator bekor qilganda,
+// mcCancelServer chaqiradi). Uzum "allaqachon bekor qilingan" (seller-order-13)
+// deb javob bersa — buni ham muvaffaqiyat deb hisoblaydi (idempotent).
+// Qaytaradi: { alreadyCanceled: boolean }.
+async function cancelOrder({ shopToken, orderId, reason = "OTHER", comment = "" }) {
+  const response = await fetch(`${BASE_URL}/v1/fbs/order/${orderId}/cancel`, {
+    method: "POST",
+    headers: {
+      accept: "*/*",
+      Authorization: shopToken,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ reason, comment }),
+  });
+
+  const text = await response.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    // JSON emas — pastda status bo'yicha hal qilinadi
+  }
+
+  const errorCode = json?.errors?.[0]?.code;
+  if (errorCode === "seller-order-13") {
+    return { alreadyCanceled: true };
+  }
+
+  if (response.ok && !json?.error) {
+    return { alreadyCanceled: false };
+  }
+
+  throw new Error(`Uzum bekor qilish xatosi (${response.status}): ${text}`);
+}
+
+module.exports = { fetchOrdersPage, confirmOrder, getOrderStatus, cancelOrder };

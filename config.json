@@ -7,6 +7,7 @@
   "columns": {
     "orders": {
       "orderId": "A",
+      "dateCreated": "C",
       "date": "E",
       "shopId": "G",
       "shipmentAddress": "I",
@@ -17,7 +18,8 @@
       "moySkladId": "S",
       "uzumConfirmed": "T",
       "mcState": "U",
-      "cancelHandled": "V"
+      "cancelHandled": "V",
+      "arrivedAt": "W"
     },
     "details": {
       "price": "E",
@@ -44,8 +46,13 @@
   },
   "cancelSync": {
     "requestDelayMs": 600,
+    "monitorWindowHours": 24,
     "run": {
       "maxDurationMs": 60000
     }
+  },
+  "mcCancelServer": {
+    "port": 4042,
+    "path": "/mc-cancel"
   }
 }

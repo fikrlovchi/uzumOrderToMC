@@ -10,83 +10,107 @@ Uzum marketpleysidagi buyurtmalarni Google Sheets orqali MoySklad'ga
 sinxronlaydi va ularning butun hayot siklini (import → yaratish → Uzum'da
 tasdiqlash → MoySklad holatini boshqarish → bekor qilishni aniqlash)
 avtomatlashtiradi. Serverda `uzum-order.timer` (systemd) har 2 daqiqada
-`node src/index.js`ni ishga tushiradi.
+`node src/index.js`ni ishga tushiradi. Bundan tashqari **doimiy ishlaydigan
+alohida servis** (`src/mcCancelServer.js`) MoySklad'dan kelgan bekor qilish
+signalini Uzum'ga o'tkazadi.
 
 **Server**: `root@64.226.69.129` (DigitalOcean), loyiha `/root/uzumOrderToMC`.
 **GitHub**: `github.com/fikrlovchi/uzumOrderToMC` (branch: `main`).
 **Bog'liq loyihalar serverda**: `~/uzumpdfs` (OAuth kaliti manbasi),
-`~/fikrlovchi-panel` (monitoring/boshqaruv paneli, ALOHIDA suhbatda davom
-etilmoqda), `~/cancelUzumOrder` (ESKI, endi ishlatilmaydi — bu loyihaga
-birlashtirildi, lekin server unitini o'chirish hali tasdiqlanmagan bo'lishi
-mumkin).
+`~/fikrlovchi-panel` (monitoring/boshqaruv paneli, ALOHIDA suhbatda),
+`~/receiveMCPost` (MoySklad customerorder webhook → `ImportedIDs` sheet;
+5-band servisining namunasi/qardoshi), `~/cancelUzumOrder` (ESKI, endi
+ishlatilmaydi).
 
 ## Arxitektura (har 2 daqiqalik tsikl, `src/index.js` tartibida)
 
-1. **`src/orderFetch.js`** — Uzum'dan `CREATED` holatidagi yangi buyurtmalarni
-   har do'kon (`.env`dagi `UZUM_TOKEN_*`/`UZUM_SHOP_*`) uchun sahifalab olib,
-   `uzum_order`/`uzum_order_detail`ga qo'shadi.
+1. **`src/orderFetch.js`** — Uzum'dan `CREATED` buyurtmalarni har do'kon uchun
+   olib `uzum_order`/`uzum_order_detail`ga qo'shadi. Yangi qatorlar qo'shilgach,
+   **`W` ustuniga** (buyurtma tushgan vaqt) Toshkent vaqt-belgisini alohida
+   `values.update` bilan yozadi (A:M `append`iga qo'shilmaydi — chunki M..W
+   orasidagi O/P/R kabi formulali ustunlarni bo'sh qiymat bilan bosib
+   yubormaslik kerak).
 2. **`index.js`ning o'zi** — `Q`≠1 qatorlarni MoySklad'ga POST qiladi
-   (`buildPositions()`: `uzum_order_detail!L` `TRUE` bo'lsa narx umumiy summa
-   sifatida/miqdor=1, `FALSE` bo'lsa birlik narxi/haqiqiy miqdor). Muvaffaqiyatli
-   bo'lsa `Q`=1, `S`=MoySklad ID. Kod 3006 (externalCode takrori) — o'zi
-   tuzaluvchi: `findByExternalCode` orqali mavjudini topib sheetni to'ldiradi.
-3. **`src/cancelSync.js`** (BOSHQA HAMMA BOSQICHDAN OLDIN) — `Q`=1, `V` bo'sh
-   qatorlar uchun: avval MoySklad holatini `S` orqali tekshiradi (himoyalangan
-   bo'lsa `V`=1). Aks holda Uzum'dan **aynan shu buyurtmaning** holatini
-   so'raydi (`GET /v1/fbs/order/{id}` — bulk ro'yxat EMAS). `CANCELED` bo'lsa:
-   `CANCEL_NOTIFY_CONTACTS`dagi odamlarni belgilab Telegram'ga xabar beradi,
-   `V`=1. MoySklad holatini bu yerda O'ZGARTIRMAYDI.
-4. **`src/orderStatusSync.js` — `promoteHeldOrders`** — oyna (`WINDOW_HOLD_*`)
-   tashqarisida bo'lsa, `U`=`hold` qatorlarni Uzum'da tasdiqlaydi + MoySklad
-   holatini `confirmed`ga o'tkazadi.
-5. **`src/orderStatusSync.js` — `confirmAndSetInitialState`** — yangi (`T`
-   bo'sh) qatorlar uchun: oyna ICHIDA bo'lsa faqat MoySklad `hold`ga (Uzum
-   HALI tasdiqlanmaydi); oyna TASHQARISIDA bo'lsa Uzum tasdiqlash + MoySklad
-   `confirmed` bir vaqtda.
+   (`buildPositions()`: detail `L` `TRUE` → narx=`E` umumiy summa/miqdor=1,
+   `FALSE` → narx=`E` birlik/miqdor=`K`). Muvaffaqiyatda `Q`=1, `S`=MoySklad ID.
+   Kod 3006 (externalCode takrori) o'zi tuzaladi.
+3. **`src/cancelSync.js`** (4-band, 24 soatlik monitoring) — `Q`=1, `V` bo'sh
+   qatorlar uchun. `mcState`=`hold` qatorlarni **o'tkazib yuboradi** (ularni
+   11:01 promotion hal qiladi). `W` (yo'q bo'lsa `C`=dateCreated) 24 soatdan
+   oshgan bo'lsa → Uzum'ga so'ramasdan `V`=1 (avtomatik yopish). 24 soat ichida
+   bo'lsa → Uzum'dan `GET /v1/fbs/order/{id}`; `CANCELED` bo'lsa →
+   **teglangan** Telegram xabari (`CANCEL_NOTIFY_CONTACTS`) + `V`=1. MoySklad
+   holati bu yerda o'zgartirilmaydi.
+4. **`src/orderStatusSync.js` — `promoteHeldOrders`** (3-band) — oyna
+   tashqarisida `mcState`=`hold` qatorlar uchun: avval Uzum holatini so'raydi.
+   `CANCELED` bo'lsa → Uzum'da tasdiqlamaydi, MoySklad holatini
+   **`canceledHref`**ga o'tkazadi, `V`=1, ID'ni ro'yxatga yig'adi. Aks holda →
+   Uzum'da tasdiqlaydi + MoySklad `confirmedHref`. Tsikl oxirida bekor
+   qilinganlar bitta **teglanmagan** xabarda: `"{id}, {id} raqamli buyurtmalar
+   avtomatik bekor qilindi"`.
+5. **`src/orderStatusSync.js` — `confirmAndSetInitialState`** (1/2-band) — yangi
+   (`T` bo'sh) qatorlar uchun: oyna ICHIDA → faqat MoySklad `holdHref`; oyna
+   TASHQARISIDA → Uzum tasdiqlash + MoySklad `confirmedHref`.
 
-### `uzum_order` ustunlari (T/U/V — yangi)
-- `G` = shopId, `L` (detail sheet) = priceIsTotal
-- `T` (`uzumConfirmed`): bo'sh/`1` — Uzum'da tasdiqlangan
-- `U` (`mcState`): bo'sh/`hold`/`done` — MoySklad holati bosqichi
-- `V` (`cancelHandled`): bo'sh/`1` — bekor qilish tekshiruvi yakunlangan
+## Doimiy servis: `src/mcCancelServer.js` (5-band)
 
-### Google Sheets ulanishi
-**Butunlay OAuth (`uzbuyo@gmail.com`, `oauth.json`) orqali** — service account
-(`credentials.json`) endi UMUMAN ishlatilmaydi (foydalanuvchi talabi bilan
-shunday qilindi). `oauth.json` manbasi: `~/uzumpdfs/oauth.json` (nusxalab
-ko'chirilgan).
+MoySklad'da operator buyurtmani bekor qilganda, MoySklad script bu servisga
+customerorder id/href'ni **POST** qiladi (`?id=..&type=customerorder` yoki JSON
+`{events:[{meta:{href,type}}]}` — `receiveMCPost` bilan bir xil format). Servis:
+1. `uzum_order!S` (moySkladId) dan mos qatorni topadi,
+2. qatordagi Uzum orderId (`A`) va shopId (`G`) orqali buyurtmani Uzum'da
+   bekor qiladi (`POST /v1/fbs/order/{id}/cancel`, `{reason:"OTHER",comment:""}`;
+   `seller-order-13` "already canceled" → muvaffaqiyat),
+3. **Telegram'ga hech narsa yubormaydi**,
+4. `uzum_order!V` bo'sh bo'lsa `1` qilib qo'yadi (shunda cancelSync qayta
+   xabar bermaydi).
+
+Ichki Node `http` bilan yozilgan (express bog'liqligi yo'q). Port:
+`MC_CANCEL_PORT` yoki `config.mcCancelServer.port` (default **4042**),
+endpoint `config.mcCancelServer.path` (default `/mc-cancel`).
+Ishga tushirish: `npm run mc-cancel-server` (yoki pm2/systemd).
+
+## Ustunlar
+
+### `uzum_order`
+- `A`=orderId, `C`=dateCreated (fallback yosh), `E`=date, `G`=shopId,
+  `I`=shipmentAddress, `O`=organization, `P`=salesChannel (O/P/R = formula),
+  `Q`=status(1=yuborilgan), `R`=trackingNumber, `S`=moySkladId
+- `T` (`uzumConfirmed`): bo'sh/`1`
+- `U` (`mcState`): bo'sh/`hold`/`done`
+- `V` (`cancelHandled`): bo'sh/`1`
+- **`W` (`arrivedAt`)**: buyurtma tushgan vaqt, `yyyy-MM-dd HH:mm:ss` (Toshkent).
+  24 soatlik monitoring shu ustundan hisoblanadi. Import'da avtomatik yoziladi.
+
+### `uzum_order_detail`
+- `E`=price (L=FALSE → birlik narxi; L=TRUE → umumiy summa),
+  `H`=orderId, `I`=product, `J`=entityType, `K`=quantity, `L`=priceIsTotal
 
 ### MoySklad holat hreflari (`config.json` → `moyskladStates`)
-- `holdHref`, `confirmedHref`, `canceledHref` — biz o'rnatadigan holatlar
-- `protectedHref` — boshqa avtomatika tomonidan qo'yiladigan yakuniy holat,
-  BIZ HECH QACHON o'zgartirmaymiz (faqat tekshiramiz)
+- `holdHref` = `a479862e-…c3` (2-band, oyna ichida)
+- `confirmedHref` = `a4798772-…c5` (1/3-band, tasdiqlangan)
+- `canceledHref` = `a47989ee-…c9` ("Atmenen", 3-band bekor qilingan held)
+- `protectedHref` — endi **ishlatilmaydi** (cancelSync'dan olib tashlandi).
 
-### Uzum API haqiqiy tezlik-limiti (aniqlangan, javob sarlavhalaridan)
-Token-bucket: `burst-capacity=2`, `replenish-rate=2` (soniyasiga), kunlik
-limit **100,000** (bizning eski 500 chegara juda past edi, olib tashlandi).
-Barcha Uzum so'rovlari orasida `config.cancelSync.requestDelayMs` (600ms,
-~1.67 so'rov/soniya) tanaffus bor.
+## Muhim topilmalar / qarorlar
 
-## Muhim topilmalar (kelajakda qaytarilmasin)
-
-1. **Uzum CANCELED ro'yxati `dateCreated` bo'yicha kamayish tartibida**
-   (`dateCancelled` emas) — shuning uchun bulk-ro'yxat + sahifa-kursori
-   yondashuvi TASHLAB YUBORILDI (buyurtma o'tkazib yuborilishi mumkin edi).
-   Hozir har bir buyurtma alohida-alohida (`GET /v1/fbs/order/{id}`) tekshiriladi.
-2. **Hold oynasi (06:10-11:00) davomida Uzum'da HAM tasdiqlanmaydi** — faqat
-   MoySklad "hold"ga qo'yiladi. Ikkalasi (Uzum confirm + MoySklad confirmed)
-   oyna tugagach BIRGA bajariladi.
-3. **Bekor qilingan buyurtmada MoySklad holati O'ZGARTIRILMAYDI** — faqat
-   Telegram xabari + `V`=1. (Foydalanuvchining aniq ko'rsatmasi bo'yicha —
-   avvalgi versiyada MoySklad'ni ham "canceled"ga o'tkazar edik, endi yo'q.)
-4. **Yangi (T/U/V) ustunlar uchun backfill kerak edi** — `scripts/backfillStatusFlags.js`
-   bir marta ishga tushirilgan (eski Q=1 qatorlarni "allaqachon bajarilgan"
-   deb belgilash uchun). Agar kelajakda yana shunga o'xshash yangi ustun
-   qo'shilsa, xuddi shunday backfill kerak bo'ladi.
-5. **`cancelUzumOrder` va eski GAS triggerlari** — bu loyihaning o'rnini
-   bosadi. Foydalanuvchi GAS trigger'ni o'chirganini aytdi; `cancelUzumOrder`
-   systemd xizmatini o'chirish hali tasdiqlanmagan bo'lishi mumkin — buni
-   tekshirib, kerak bo'lsa eslatish kerak.
+1. **Pul hisobi (6/7-band) o'zgarishsiz tasdiqlangan**: `price=E×100` doim;
+   `L=FALSE` → `quantity=K` (E birlik), `L=TRUE` → `quantity=1` (E umumiy summa).
+   Bu yagona izchil talqin (L=TRUE'da qty=K bo'lsa MoySklad K×E ko'paytirar edi).
+2. **Bekor qilish endi 24 soatlik oyna bilan**: har buyurtma faqat tushganidan
+   keyingi 24 soat davomida Uzum'da tekshiriladi; keyin avtomatik `V`=1. `W`
+   ustuni shu uchun qo'shildi. **Eski (W-siz) qatorlar** uchun `C` (dateCreated)
+   fallback ishlatiladi; foydalanuvchi eski qatorlarga qo'lda ">24 soat oldingi"
+   vaqt yozib qo'yishi ham mumkin (shunda ular avtomatik yopiladi).
+3. **Ikki xil bekor-xabar formati**: 3-band (11:01 promotion) — bitta xabarda
+   ID ro'yxati, **teglanmagan**. 4-band (24h monitoring) — har biri alohida,
+   `CANCEL_NOTIFY_CONTACTS` **teglangan** (`msg exmp.js` uslubida).
+4. **`hold` qatorlar cancelSync'da tegilmaydi** — 3-band va 4-band xabarlari
+   aralashmasligi uchun. Hold-buyurtmani faqat promotion (3-band) hal qiladi.
+5. **5-band (MoySklad→Uzum) va 4-band (Uzum→bildirish) teskari yo'nalishlar**:
+   ikkalasi ham oxirida `V`=1 qo'yadi. 5-band cancel qilib `V`=1 qo'ygach,
+   4-band uni qayta ko'rib xabar bermaydi.
+6. **`cancelUzumOrder` va eski GAS triggerlari** — bu loyiha o'rnini bosadi.
 
 ## `.env` da bo'lishi kerak bo'lgan o'zgaruvchilar
 
@@ -103,50 +127,51 @@ WINDOW_HOLD_END=11:00
 CANCEL_NOTIFY_CONTACTS=Ismi:chatId,Ismi2:chatId2
 UZUM_TOKEN_<KABINET>=...
 UZUM_SHOP_<KABINET>_<BELGI>=...
-DRY_RUN=false   # true = xavfsiz sinov rejimi, hech narsa real yozilmaydi
+MC_CANCEL_PORT=4042    # ixtiyoriy, mcCancelServer porti (default 4042)
+DRY_RUN=false          # true = xavfsiz sinov rejimi
 ```
-
-**Diqqat**: server `.env`da hali eski `UZUM_DAILY_REQUEST_LIMIT` qatori
-qolgan bo'lishi mumkin — endi o'qilmaydi (kodda ishlatilmaydi), zarar
-qilmaydi, lekin xohlasa o'chirish mumkin. Eski `CANCEL_NOTIFY_NAME`/
-`CANCEL_NOTIFY_CHAT_ID` o'rniga endi `CANCEL_NOTIFY_CONTACTS` kerak.
 
 ## Hozirgi holat / keyingi qadam
 
-Oxirgi katta o'zgarish (bekor qilishni butunlay qayta qurish, commit
-`03e4059`) hali **serverda sinalmagan**. Keyingi qadam:
+Katta o'zgarishlar to'plami (W ustuni + 24h monitoring, held CANCELED
+tekshiruvi, mcCancelServer) yozildi va lokalda sintaksis + vaqt-mantiqi +
+servis HTTP qatlami sinaldi. **Serverda hali sinalmagan.** Keyingi qadam:
 
-1. Serverda `.env`ga `CANCEL_NOTIFY_CONTACTS=Ismi:chatId` qo'shish (eski
-   `CANCEL_NOTIFY_NAME`/`CANCEL_NOTIFY_CHAT_ID` o'rniga).
-2. `DRY_RUN=true` bilan `git pull && npm start`, loglarni ko'rib chiqish
-   (endi "Bekor qilish tekshiruvi: N tekshirildi, ..." formatidagi log
-   kutilmoqda, avvalgi "kunlik limit"/sahifa-kursori xabarlari YO'Q bo'lishi
-   kerak).
-3. Hammasi to'g'ri ko'rinsa `DRY_RUN=false`.
-4. `cancelUzumOrder` systemd xizmati hali o'chirilmagan bo'lsa — o'chirish.
+1. **Sheet tayyorlash**: `uzum_order`ga `W` sarlavhasini qo'shish. Eski (Q=1,
+   V bo'sh) qatorlarga qo'lda ">24 soat oldingi" sana yozib chiqish (yoki C
+   ustuni fallback ishlaydi — lekin qo'lda yozish aniqroq).
+2. `git pull`, `DRY_RUN=true` bilan `npm start` — cron tsiklini tekshirish.
+   Kutilgan loglar: "Uzum import: … W …", "Bekor qilish tekshiruvi: N
+   tekshirildi, … 24 soatdan o'tgani avtomatik yopildi …".
+3. **mcCancelServer**ni ishga tushirish: `pm2 start src/mcCancelServer.js
+   --name mc-cancel` (yoki systemd unit). `ufw allow 4042`. Tekshirish:
+   `curl http://127.0.0.1:4042/`. MoySklad script'ni shu endpointga
+   yo'naltirish.
+4. Hammasi to'g'ri bo'lsa `DRY_RUN=false`.
+5. `cancelUzumOrder` systemd xizmati hali o'chirilmagan bo'lsa — o'chirish.
 
 ## Fayllar xaritasi
 
 ```
 src/
   index.js              — asosiy orkestratsiya, buildPositions (narx/miqdor)
-  orderFetch.js          — Uzum CREATED -> sheet (OAuth)
-  cancelSync.js           — bekor qilishni tekshirish (yangi, sodda dizayn)
-  orderStatusSync.js       — Uzum confirm + MoySklad hold/confirmed
+  orderFetch.js          — Uzum CREATED -> sheet + W ustuni (OAuth)
+  cancelSync.js           — 24h bekor qilish monitoringi (W asosida, teglangan)
+  orderStatusSync.js       — confirmAndSetInitialState + promoteHeldOrders (3-band)
+  mcCancelServer.js        — YANGI: MoySklad->Uzum bekor qilish HTTP servisi (5-band)
   oauthSheets.js           — OAuth2 Sheets klienti (uzbuyo@gmail.com)
   uzumCabinets.js          — .env'dan UZUM_TOKEN_*/UZUM_SHOP_* o'qish
-  uzumApi.js               — Uzum API: fetchOrdersPage, confirmOrder, getOrderStatus
-  moysklad.js              — MoySklad: setOrderState, getOrderStateHref,
-                              findByExternalCode, msFetch (429 retry)
+  uzumApi.js               — fetchOrdersPage, confirmOrder, getOrderStatus, cancelOrder
+  moysklad.js              — MoySklad: setOrderState, getOrderStateHref, findByExternalCode
   timeWindow.js            — Toshkent vaqti, hold-oyna hisoblash
+  sheetsUtil.js            — colLetterToIndex, formatDateTimeGMT5,
+                              tashkentNowString, parseSheetTimeToEpochMs (W uchun)
   telegram.js              — umumiy Telegram yuboruvchi
-  skuAlerts.js             — SKU topilmasa ogohlantirish (eski funksiya)
-  dryRun.js                — DRY_RUN tekshiruvi
-  reporter.js, logger.js   — fikrlovchi-panel bilan integratsiya
+  dryRun.js, reporter.js, logger.js, skuAlerts.js
 scripts/
   backfillStatusFlags.js   — bir martalik T/U/V migratsiyasi (ishlatilgan)
-config.json                — barcha sozlamalar (Sheets ustunlari, MoySklad
-                              hreflari, cancelSync.requestDelayMs va h.k.)
+config.json                — sozlamalar (ustunlar, MoySklad hreflari, cancelSync,
+                              mcCancelServer)
 ```
 
 ## Boshqa suhbatda davom etish
@@ -155,6 +180,3 @@ Yangi chat/oynada shunday deb boshlang:
 
 > `C:\Users\User\Desktop\Buyo\Server\Stocker\uzumOrderToMC\HANDOFF.md` faylini
 > o'qib chiq, shu loyiha ustida davom etamiz.
-
-Bu fayl loyihaning o'zida (git'da) saqlanadi, shuning uchun har doim
-`git pull` qilingandan keyin ham mavjud bo'ladi.

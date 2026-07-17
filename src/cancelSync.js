@@ -1,9 +1,8 @@
 const config = require("../config.json");
 const logger = require("./logger");
-const { colLetterToIndex } = require("./sheetsUtil");
+const { colLetterToIndex, parseSheetTimeToEpochMs } = require("./sheetsUtil");
 const { getOrderStatus } = require("./uzumApi");
 const { parseCabinets, buildShopTokenMap } = require("./uzumCabinets");
-const moysklad = require("./moysklad");
 const { sendTelegramMessage } = require("./telegram");
 const { isDryRun } = require("./dryRun");
 
@@ -11,6 +10,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Uzum'ning haqiqiy tezlik-limiti (token-bucket: 2/soniya) — boshqa
 // modullar bilan bir xil tanaffus.
 const REQUEST_DELAY_MS = config.cancelSync?.requestDelayMs || 600;
+// Buyurtma tushganidan (W ustuni) shuncha soat o'tguncha Uzum'da har tsiklda
+// bekor qilinganini tekshiramiz; o'tgach avtomatik cancelHandled=1 qilamiz.
+const MONITOR_WINDOW_MS = (config.cancelSync?.monitorWindowHours || 24) * 60 * 60 * 1000;
 
 const ORD = Object.fromEntries(
   Object.entries(config.columns.orders).map(([k, v]) => [k, colLetterToIndex(v)])
@@ -18,6 +20,14 @@ const ORD = Object.fromEntries(
 
 function cell(value) {
   return value === undefined || value === null ? "" : value;
+}
+
+// 2020-01-01'gacha bo'lgan epoch qiymatlarni ishonchsiz deb null qaytaradi
+// (noto'g'ri format/birlik natijasi) — shunda yangi buyurtma xato yosh bilan
+// avtomatik yopilib qolmaydi.
+const MIN_SANE_MS = Date.UTC(2020, 0, 1);
+function saneArrival(ms) {
+  return ms != null && ms >= MIN_SANE_MS ? ms : null;
 }
 
 function escapeHtml(value) {
@@ -55,26 +65,27 @@ function cellUpdate(sheetName, columnKey, rowIndex, value) {
   return { range: `${sheetName}!${columnLetter}${rowIndex + 1}`, values: [[value]] };
 }
 
-// Q=1 (MoySklad'da yaratilgan) va V (cancelHandled) hali bo'sh bo'lgan har bir
-// buyurtma uchun:
-//  1. Avval MoySklad holatini S (moySkladId) orqali tekshiradi — arzon so'rov.
-//     Agar allaqachon "himoyalangan" (yakuniy) holatda bo'lsa, V=1 qilib
-//     qo'yiladi va boshqa hech narsa qilinmaydi.
-//  2. Aks holda, Uzum'dan aynan shu buyurtmaning joriy holatini so'raydi
-//     (butun CANCELED ro'yxatini emas — faqat bitta buyurtma). Agar Uzum
-//     statusi CANCELED bo'lsa: mas'ul odamlarni belgilab Telegram'ga xabar
-//     beradi va V=1 qilib qo'yadi. MoySklad holati BU YERDA o'zgartirilmaydi
-//     — faqat ogohlantirish va belgilash.
-async function run({ sheets, orders, moyskladToken }) {
+// 24 soatlik bekor qilish monitoringi (4-band). Q=1 (MoySklad'da yaratilgan)
+// va V (cancelHandled) hali bo'sh bo'lgan har bir buyurtma uchun:
+//  - mcState="hold" (oyna ichida ushlab turilgan) qatorlar O'TKAZIB YUBORILADI
+//    — ularni 11:01 promotion (orderStatusSync.promoteHeldOrders / 3-band) hal
+//    qiladi, shu bilan held-xabar va bu yerdagi teglangan xabar aralashmaydi.
+//  - W (buyurtma tushgan vaqt) 24 soatdan oldin bo'lsa: Uzum'ga umuman so'rov
+//    yubormasdan V=1 qilinadi (avtomatik yopiladi).
+//  - W 24 soat ichida bo'lsa: Uzum'dan aynan shu buyurtmaning holatini so'raydi.
+//    CANCELED bo'lsa — CANCEL_NOTIFY_CONTACTS odamlarini belgilab Telegram'ga
+//    xabar beradi va V=1 qiladi. (MoySklad holati bu yerda o'zgartirilmaydi.)
+async function run({ sheets, orders }) {
   const ordersSheetName = config.sheets.orders;
   const shopTokens = buildShopTokenMap(parseCabinetsSafe());
   const rowUpdates = [];
   let errorCount = 0;
   let checkedCount = 0;
   let canceledCount = 0;
-  let alreadyProtectedCount = 0;
+  let autoFlaggedCount = 0;
 
-  const runDeadline = Date.now() + (config.cancelSync?.run?.maxDurationMs || 60000);
+  const now = Date.now();
+  const runDeadline = now + (config.cancelSync?.run?.maxDurationMs || 60000);
 
   for (let i = 1; i < orders.length; i++) {
     if (Date.now() > runDeadline) {
@@ -87,30 +98,36 @@ async function run({ sheets, orders, moyskladToken }) {
     const sentToMoySklad = row[ORD.status];
     const cancelHandled = row[ORD.cancelHandled];
     if (!orderId || sentToMoySklad != 1 || cancelHandled == 1) continue;
+    // Hali oyna ichida ushlab turilgan buyurtmalar 11:01 promotion tomonidan
+    // tekshiriladi (3-band) — bu yerda tegmaymiz.
+    if (row[ORD.mcState] === "hold") continue;
 
-    const moySkladId = row[ORD.moySkladId];
-    if (!moySkladId) continue;
-    const href = moysklad.customerOrderHref(moySkladId);
+    // Buyurtma tushgan vaqt (W); yo'q bo'lsa Uzum dateCreated (C) ga tayanamiz.
+    // 2020'gacha bo'lgan qiymat ishonchsiz (masalan sekund-timestamp ms deb
+    // noto'g'ri o'qilgan) — bunday holatda null deb hisoblab, avtomatik V=1
+    // qilib qo'ymaymiz, xavfsizroq tomon: tekshirishda davom etamiz.
+    const arrivedMs = saneArrival(
+      parseSheetTimeToEpochMs(row[ORD.arrivedAt]) ?? parseSheetTimeToEpochMs(row[ORD.dateCreated])
+    );
+
+    // 24 soatdan oshgan buyurtma — Uzum'ga so'rov yubormasdan avtomatik yopamiz.
+    if (arrivedMs != null && now - arrivedMs > MONITOR_WINDOW_MS) {
+      markCancelHandled(orders, i, ordersSheetName, rowUpdates);
+      autoFlaggedCount++;
+      continue;
+    }
+
+    const shopId = String(cell(row[ORD.shopId]));
+    const shopToken = shopTokens.get(shopId);
+    if (!shopToken) {
+      logger.error(`Order ${orderId} uchun shop ${shopId} tokeni topilmadi (.env UZUM_SHOP_*) — bekor qilish tekshiruvi o'tkazib yuborildi.`);
+      errorCount++;
+      continue;
+    }
 
     checkedCount++;
 
     try {
-      const currentStateHref = await moysklad.getOrderStateHref(href, moyskladToken);
-
-      if (currentStateHref === config.moyskladStates.protectedHref) {
-        markCancelHandled(orders, i, ordersSheetName, rowUpdates);
-        alreadyProtectedCount++;
-        continue;
-      }
-
-      const shopId = String(cell(row[ORD.shopId]));
-      const shopToken = shopTokens.get(shopId);
-      if (!shopToken) {
-        logger.error(`Order ${orderId} uchun shop ${shopId} tokeni topilmadi (.env UZUM_SHOP_*) — bekor qilish tekshiruvi o'tkazib yuborildi.`);
-        errorCount++;
-        continue;
-      }
-
       const uzumOrder = await getOrderStatus({ shopToken, orderId });
 
       if (uzumOrder && uzumOrder.status === "CANCELED") {
@@ -140,7 +157,7 @@ async function run({ sheets, orders, moyskladToken }) {
 
   logger.info(
     `Bekor qilish tekshiruvi: ${checkedCount} tekshirildi, ${canceledCount} bekor qilingan topildi, ` +
-      `${alreadyProtectedCount} allaqachon himoyalangan, ${errorCount} xato.`
+      `${autoFlaggedCount} 24 soatdan o'tgani avtomatik yopildi, ${errorCount} xato.`
   );
 
   return { errorCount };

@@ -8,6 +8,47 @@ function colLetterToIndex(letter) {
 }
 
 const SHEETS_EPOCH_UTC_MS = Date.UTC(1899, 11, 30);
+const TASHKENT_OFFSET_MS = 5 * 60 * 60 * 1000;
+
+// Hozirgi Toshkent vaqti "yyyy-MM-dd HH:mm:ss" ko'rinishida (receiveMCPost
+// bilan bir xil format) — uzum_order!W (buyurtma tushgan vaqt) ustuniga
+// yoziladi. Inson o'qiy oladigan format tanlangan, chunki eski qatorlar
+// uchun foydalanuvchi qo'lda "eski" vaqt kiritishi mumkin bo'lishi kerak.
+function tashkentNowString() {
+  return new Date(Date.now() + TASHKENT_OFFSET_MS)
+    .toISOString()
+    .replace("T", " ")
+    .slice(0, 19);
+}
+
+// uzum_order!W qiymatini absolut UTC epoch-millisekundga aylantiradi (yosh
+// hisoblash uchun). Uchta ko'rinishni qabul qiladi:
+//  - "yyyy-MM-dd[ HH:mm[:ss]]" matn (Toshkent devor-soati deb talqin qilinadi),
+//  - Sheets serial sana (kichik son, 1899-12-30 dan beri kunlar, devor-soati),
+//  - epoch-ms (katta son, allaqachon absolut UTC).
+// Qiymat bo'sh/tanib bo'lmaydigan bo'lsa null qaytaradi.
+function parseSheetTimeToEpochMs(raw) {
+  if (raw === undefined || raw === null || raw === "") return null;
+
+  if (typeof raw === "number") {
+    if (!Number.isFinite(raw)) return null;
+    if (raw < 100000) {
+      // Sheets serial (Toshkent devor-soati) -> absolut UTC
+      return SHEETS_EPOCH_UTC_MS + raw * 86400 * 1000 - TASHKENT_OFFSET_MS;
+    }
+    return raw; // epoch-ms (UTC)
+  }
+
+  const s = String(raw).trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(s);
+  if (match) {
+    const [, y, mo, d, h, mi, se] = match;
+    return Date.UTC(+y, +mo - 1, +d, +(h || 0), +(mi || 0), +(se || 0)) - TASHKENT_OFFSET_MS;
+  }
+
+  const parsed = Date.parse(s);
+  return Number.isNaN(parsed) ? null : parsed;
+}
 
 // The order date column in this sheet holds either:
 //  - a native Sheets serial date (small number, days since 1899-12-30, naive
@@ -34,4 +75,4 @@ function formatDateTimeGMT5(dateRaw) {
   );
 }
 
-module.exports = { colLetterToIndex, formatDateTimeGMT5 };
+module.exports = { colLetterToIndex, formatDateTimeGMT5, tashkentNowString, parseSheetTimeToEpochMs };
