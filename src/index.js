@@ -63,16 +63,22 @@ function buildPositions(details, orderId) {
     let entityType = cell(row[DET.entityType]).toString().trim().toLowerCase() || "product";
     const prodHref = toHref(row[DET.product], entityType);
 
-    // uzum_order_detail!L (priceIsTotal) shu qatorning narxi umumiy summami
-    // (TRUE — miqdor 1, narx E'dagi qiymat) yoki birlik narximi (FALSE —
-    // haqiqiy miqdor yuboriladi, MoySklad narx x miqdorni o'zi hisoblaydi)
-    // ekanini belgilaydi.
+    // uzum_order_detail!L (priceIsTotal):
+    //  - TRUE  → E = qator UMUMIY summasi; miqdor = K. MoySklad'da alohida
+    //    "summa" maydoni yo'q (summani narx×miqdor deb o'zi hisoblaydi),
+    //    shuning uchun birlik narxni E/K qilib yuboramiz → (E/K)×K = E.
+    //  - FALSE → E = BIRLIK narxi; miqdor = K → MoySklad summani E×K deb
+    //    hisoblaydi.
     const priceIsTotal = row[DET.priceIsTotal] === true || row[DET.priceIsTotal] === "TRUE";
-    const quantity = priceIsTotal ? 1 : parseFloat(row[DET.quantity]);
+    let quantity = parseFloat(row[DET.quantity]);
+    if (!Number.isFinite(quantity) || quantity <= 0) quantity = 1;
+    const unitPrice = priceIsTotal
+      ? parseFloat(row[DET.price]) / quantity
+      : parseFloat(row[DET.price]);
 
     positions.push({
       quantity,
-      price: parseFloat(row[DET.price]) * 100,
+      price: unitPrice * 100,
       reserve: entityType === "service" ? 0 : 1,
       assortment: {
         meta: { href: prodHref, type: entityType, mediaType: "application/json" },
