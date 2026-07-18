@@ -4,11 +4,14 @@ const TIMEOUT_MS = 3000;
 
 // Muvaffaqiyat/muvaffaqiyatsizlikni qaytaradi (throw qilmaydi) — chaqiruvchi
 // muvaffaqiyatsiz urinishni "yuborildi" deb belgilamasligi kerak.
-async function sendTelegramMessage({ text, parseMode } = {}) {
+// chatId/topicId berilsa — o'sha guruh/topic'ka yuboriladi (masalan SKU
+// ogohlantirishlari alohida guruhga); berilmasa .env'dagi TELEGRAM_CHAT_ID/
+// TELEGRAM_TOPIC_ID (bekor qilingan buyurtmalar guruhi) ishlatiladi.
+async function sendTelegramMessage({ text, parseMode, chatId, topicId } = {}) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
-  const topicId = process.env.TELEGRAM_TOPIC_ID;
-  if (!token || !chatId) return false;
+  const targetChat = chatId || process.env.TELEGRAM_CHAT_ID;
+  const targetTopic = topicId || process.env.TELEGRAM_TOPIC_ID;
+  if (!token || !targetChat) return false;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -17,8 +20,8 @@ async function sendTelegramMessage({ text, parseMode } = {}) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        chat_id: chatId,
-        message_thread_id: topicId ? Number(topicId) : undefined,
+        chat_id: targetChat,
+        message_thread_id: targetTopic ? Number(targetTopic) : undefined,
         text,
         parse_mode: parseMode,
       }),
