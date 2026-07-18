@@ -240,14 +240,6 @@ async function createMoySkladOrders() {
     }
   }
 
-  // CREATE_ONLY=true bo'lsa: faqat import + MoySklad'da buyurtma yaratish
-  // bajariladi, bekor qilish/tasdiqlash/holat bosqichlari o'tkazib yuboriladi
-  // (zaxira buyurtmalarni shoshilinch yaratish uchun).
-  if (process.env.CREATE_ONLY === "true") {
-    logger.info(`CREATE_ONLY: faqat import + yaratish bajarildi (${successCount} yaratildi, ${errorCount} xato) — qolgan bosqichlar o'tkazib yuborildi.`);
-    return { startedAt, successCount, errorCount };
-  }
-
   // Bekor qilish → oyna tugagach ko'tarish → yangi tasdiqlash+holat o'rnatish
   // tartibida: bir xil tsiklda bekor qilingan buyurtma hech qachon keyingi
   // bosqichlar tomonidan qayta "tasdiqlangan" holatga qaytarilmasin.
