@@ -14,6 +14,27 @@ const REQUEST_DELAY_MS = config.cancelSync?.requestDelayMs || 600;
 // bekor qilinganini tekshiramiz; o'tgach avtomatik cancelHandled=1 qilamiz.
 const MONITOR_WINDOW_MS = (config.cancelSync?.monitorWindowHours || 24) * 60 * 60 * 1000;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const TASHKENT_OFFSET_MS = 5 * 60 * 60 * 1000;
+// Yakshanba (0) — ombor buyurtmalarni Uzum'ga jo'natmaydigan dam olish kuni.
+const SKIP_WEEKDAY = 0;
+
+// Toshkent vaqti bo'yicha hafta kuni (0=Yakshanba .. 6=Shanba).
+function tashkentWeekday(ms) {
+  return new Date(ms + TASHKENT_OFFSET_MS).getUTCDay();
+}
+
+// 24 soatlik monitoring muddati. Agar muddat Toshkent bo'yicha YAKSHANBA'ga
+// to'g'ri kelsa, +1 kun (dushanbaga) suriladi: yakshanba kuni buyurtmalar
+// omborga jo'natilmaydi, shuning uchun o'sha kun bekor bo'lganini hali ham
+// kuzatib, Uzum'ga jo'natilishini oldini olishimiz kerak (aks holda ombor
+// bekorligini bilmay jo'natadi -> ortiqcha logistika xarajati).
+function monitorDeadline(arrivedMs) {
+  let deadline = arrivedMs + MONITOR_WINDOW_MS;
+  if (tashkentWeekday(deadline) === SKIP_WEEKDAY) deadline += DAY_MS;
+  return deadline;
+}
+
 const ORD = Object.fromEntries(
   Object.entries(config.columns.orders).map(([k, v]) => [k, colLetterToIndex(v)])
 );
@@ -110,8 +131,9 @@ async function run({ sheets, orders }) {
       parseSheetTimeToEpochMs(row[ORD.arrivedAt]) ?? parseSheetTimeToEpochMs(row[ORD.dateCreated])
     );
 
-    // 24 soatdan oshgan buyurtma — Uzum'ga so'rov yubormasdan avtomatik yopamiz.
-    if (arrivedMs != null && now - arrivedMs > MONITOR_WINDOW_MS) {
+    // Monitoring muddati o'tgan buyurtma — Uzum'ga so'rov yubormasdan avtomatik
+    // yopamiz. Muddat yakshanbaga tushsa dushanbagacha uzaytiriladi (yuqoriga q.)
+    if (arrivedMs != null && now > monitorDeadline(arrivedMs)) {
       if (isDryRun()) {
         logger.info(`[DRY_RUN] Order ${orderId} 24 soatdan o'tgan — V=1 qilinardi.`);
       } else {
