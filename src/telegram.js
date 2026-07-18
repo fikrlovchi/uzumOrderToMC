@@ -4,11 +4,12 @@ const TIMEOUT_MS = 3000;
 
 // Muvaffaqiyat/muvaffaqiyatsizlikni qaytaradi (throw qilmaydi) — chaqiruvchi
 // muvaffaqiyatsiz urinishni "yuborildi" deb belgilamasligi kerak.
-// chatId/topicId berilsa — o'sha guruh/topic'ka yuboriladi (masalan SKU
-// ogohlantirishlari alohida guruhga); berilmasa .env'dagi TELEGRAM_CHAT_ID/
-// TELEGRAM_TOPIC_ID (bekor qilingan buyurtmalar guruhi) ishlatiladi.
-async function sendTelegramMessage({ text, parseMode, chatId, topicId } = {}) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
+// botToken/chatId/topicId berilsa — o'sha bot va guruh/topic ishlatiladi
+// (masalan SKU ogohlantirishlari alohida bot + alohida guruhga); berilmasa
+// .env'dagi TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID / TELEGRAM_TOPIC_ID
+// (bekor qilingan buyurtmalar boti va guruhi) ishlatiladi.
+async function sendTelegramMessage({ text, parseMode, chatId, topicId, botToken } = {}) {
+  const token = botToken || process.env.TELEGRAM_BOT_TOKEN;
   const targetChat = chatId || process.env.TELEGRAM_CHAT_ID;
   const targetTopic = topicId || process.env.TELEGRAM_TOPIC_ID;
   if (!token || !targetChat) return false;

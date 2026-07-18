@@ -29,10 +29,12 @@ async function notifyIfNew(sku) {
     const lastNotifiedAt = state[sku];
     if (lastNotifiedAt && Date.now() - lastNotifiedAt < COOLDOWN_MS) return;
 
-    // SKU ogohlantirishlari ALOHIDA guruh/topic'ka boradi (bekor qilingan
-    // buyurtmalar guruhiga emas) — .env: SKU_ALERT_CHAT_ID / SKU_ALERT_TOPIC_ID.
+    // SKU ogohlantirishlari ALOHIDA bot + alohida guruh/topic'ka boradi (bekor
+    // qilingan buyurtmalar boti/guruhiga emas) — .env: SKU_ALERT_BOT_TOKEN /
+    // SKU_ALERT_CHAT_ID / SKU_ALERT_TOPIC_ID.
     const sent = await sendTelegramMessage({
       text: sku,
+      botToken: process.env.SKU_ALERT_BOT_TOKEN,
       chatId: process.env.SKU_ALERT_CHAT_ID,
       topicId: process.env.SKU_ALERT_TOPIC_ID,
     });
