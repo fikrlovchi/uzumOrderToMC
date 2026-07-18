@@ -119,4 +119,18 @@ async function cancelOrder({ shopToken, orderId, reason = "OTHER", comment = "" 
   throw new Error(`Uzum bekor qilish xatosi (${response.status}): ${text}`);
 }
 
-module.exports = { fetchOrdersPage, confirmOrder, getOrderStatus, cancelOrder };
+// Buyurtma uchun LARGE label'ni oladi (base64 hujjat). Xato bo'lsa null.
+// uzumFetch orqali — 429/5xx'da qayta uriniladi (umumiy rate-limit bilan).
+async function fetchLabel({ shopToken, orderId, size = "LARGE" }) {
+  const url = `${BASE_URL}/v1/fbs/order/${orderId}/labels/print?size=${size}`;
+  try {
+    const response = await uzumFetch(url, { headers: { accept: "*/*", Authorization: shopToken } });
+    if (!response.ok) return null;
+    const json = await response.json();
+    return json?.payload?.document || null;
+  } catch {
+    return null;
+  }
+}
+
+module.exports = { fetchOrdersPage, confirmOrder, getOrderStatus, cancelOrder, fetchLabel };

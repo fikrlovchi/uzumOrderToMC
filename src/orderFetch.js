@@ -3,6 +3,7 @@ const logger = require("./logger");
 const { getSheetsClient } = require("./oauthSheets");
 const { fetchOrdersPage } = require("./uzumApi");
 const { parseCabinets, buildShopTokenMap } = require("./uzumCabinets");
+const { cacheLabel } = require("./labels");
 const { isDryRun } = require("./dryRun");
 const { tashkentNowString } = require("./sheetsUtil");
 
@@ -68,6 +69,7 @@ async function run() {
 
   const newOrdersBatch = [];
   const newItemsBatch = [];
+  const newLabelTargets = [];   // {orderId, shopToken} — label oldindan olish uchun
 
   for (const [shopId, shopToken] of shopTokens) {
     let page = 0;
@@ -105,6 +107,7 @@ async function run() {
             o.scheme || "",
           ]);
           existingOrderIds.add(orderId);
+          newLabelTargets.push({ orderId, shopToken });
         }
 
         for (const it of o.orderItems || []) {
@@ -181,6 +184,21 @@ async function run() {
       insertDataOption: "INSERT_ROWS",
       requestBody: { values: newItemsBatch },
     });
+  }
+
+  // Label pre-fetch: yangi orderlar labelini oldindan shared cache'ga olamiz.
+  // Shunda uzumpdfs generatsiyasi Uzum'ga urmaydi (429 kamayadi, tez bo'ladi).
+  let labelsFetched = 0;
+  for (const { orderId, shopToken } of newLabelTargets) {
+    try {
+      if (await cacheLabel(shopToken, orderId)) labelsFetched++;
+    } catch (e) {
+      logger.error(`Label cache xato (order ${orderId}): ${e.message}`);
+    }
+    await sleep(REQUEST_DELAY_MS);
+  }
+  if (newLabelTargets.length) {
+    logger.info(`Label cache: ${labelsFetched}/${newLabelTargets.length} ta yangi label olindi.`);
   }
 
   logger.info(`Uzum import: ${newOrdersBatch.length} ta yangi buyurtma, ${newItemsBatch.length} ta yangi item qo'shildi.`);
