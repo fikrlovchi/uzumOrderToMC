@@ -114,17 +114,36 @@ function buildPayload(order, orderId, trackingNumber, positions, mc) {
   };
 }
 
-async function markRowSent(sheets, spreadsheetId, ordersSheetName, rowNumber, moySkladId) {
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId,
-    requestBody: {
-      valueInputOption: "RAW",
-      data: [
-        { range: `${ordersSheetName}!Q${rowNumber}`, values: [[1]] },
-        { range: `${ordersSheetName}!S${rowNumber}`, values: [[moySkladId]] },
-      ],
-    },
-  });
+// Q/S yozuvlarini darhol yozmasdan navbatga qo'yadi — Google Sheets yozuv
+// kvotasini (daqiqasiga 60 yozuv so'rovi) oshirmaslik uchun ular tsikl davomida
+// chunk bo'lib va oxirida bitta batchUpdate bilan yoziladi (har buyurtmaga
+// alohida so'rov emas).
+function queueRowSent(sheetUpdates, ordersSheetName, rowNumber, moySkladId) {
+  sheetUpdates.push(
+    { range: `${ordersSheetName}!Q${rowNumber}`, values: [[1]] },
+    { range: `${ordersSheetName}!S${rowNumber}`, values: [[moySkladId]] }
+  );
+}
+
+async function flushSheetUpdates(sheets, spreadsheetId, sheetUpdates) {
+  if (sheetUpdates.length === 0) return;
+  const batch = sheetUpdates.splice(0, sheetUpdates.length);
+  // Sheets yozuv kvotasi (429) yoki vaqtincha 5xx bo'lsa — orqaga chekinib
+  // qayta urinamiz (kvota daqiqasiga tiklanadi).
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      await sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId,
+        requestBody: { valueInputOption: "RAW", data: batch },
+      });
+      return;
+    } catch (e) {
+      const status = e.code || e.response?.status;
+      const retryable = status === 429 || (status >= 500 && status < 600);
+      if (!retryable || attempt === 5) throw e;
+      await new Promise((r) => setTimeout(r, Math.min(2000 * 2 ** attempt, 30000)));
+    }
+  }
 }
 
 function deriveStatus(successCount, errorCount) {
@@ -137,6 +156,10 @@ async function createMoySkladOrders() {
   const startedAt = new Date().toISOString();
   let successCount = 0;
   let errorCount = 0;
+  // Q/S yozuvlari shu navbatga to'planadi; har ~50 buyurtmada (100 katak) va
+  // tsikl oxirida bitta batchUpdate bilan yoziladi (Sheets yozuv kvotasi uchun).
+  const sheetUpdates = [];
+  const FLUSH_EVERY_CELLS = 100;
 
   // Google Sheets'ga barcha o'qish/yozishlar uzbuyo@gmail.com (OAuth) nomidan
   // amalga oshadi — service account (credentials.json) endi sheet uchun
@@ -207,13 +230,14 @@ async function createMoySkladOrders() {
 
       if (response.status === 200 || response.status === 201) {
         const moySkladId = JSON.parse(resText).id;
-        await markRowSent(sheets, spreadsheetId, ordersSheetName, i + 1, moySkladId);
+        queueRowSent(sheetUpdates, ordersSheetName, i + 1, moySkladId);
         // Shu tsiklning qolgan bosqichlari (tasdiqlash, holat o'rnatish) bu
         // buyurtmani darhol ko'rishi uchun xotiradagi qatorni ham yangilaymiz.
         order[ORD.status] = 1;
         order[ORD.moySkladId] = moySkladId;
         logger.info(`Order ${orderId} muvaffaqiyatli yaratildi (${moySkladId}).`);
         successCount++;
+        if (sheetUpdates.length >= FLUSH_EVERY_CELLS) await flushSheetUpdates(sheets, spreadsheetId, sheetUpdates);
       } else if (resText.includes('"code" : 3006')) {
         // Bu buyurtma avvalgi (masalan uzilib qolgan) tsiklda MoySklad'da
         // allaqachon yaratilgan, lekin sheetga Q/S yozilmagan edi. Qayta
@@ -221,11 +245,12 @@ async function createMoySkladOrders() {
         // sheetni orqasidan to'ldiramiz.
         const existing = await moysklad.findByExternalCode(orderId, token);
         if (existing) {
-          await markRowSent(sheets, spreadsheetId, ordersSheetName, i + 1, existing.id);
+          queueRowSent(sheetUpdates, ordersSheetName, i + 1, existing.id);
           order[ORD.status] = 1;
           order[ORD.moySkladId] = existing.id;
           logger.info(`Order ${orderId} MoySklad'da allaqachon bor edi (${existing.id}) — sheet to'ldirildi.`);
           successCount++;
+          if (sheetUpdates.length >= FLUSH_EVERY_CELLS) await flushSheetUpdates(sheets, spreadsheetId, sheetUpdates);
         } else {
           logger.error(`Order ${orderId} xatolik: ${resText}`);
           errorCount++;
@@ -239,6 +264,9 @@ async function createMoySkladOrders() {
       errorCount++;
     }
   }
+
+  // Qolgan Q/S yozuvlarini yozib bo'lamiz (chunk'dan oshmagan qismi).
+  await flushSheetUpdates(sheets, spreadsheetId, sheetUpdates);
 
   // CREATE_ONLY=true bo'lsa: faqat import + MoySklad'da buyurtma yaratish
   // bajariladi, bekor qilish/tasdiqlash/holat bosqichlari o'tkazib yuboriladi
