@@ -82,17 +82,7 @@ async function confirmAndSetInitialState({ sheets, orders, moyskladToken }) {
   const rowUpdates = [];
   let errorCount = 0;
 
-  // Vaqt byudjeti: ko'p yangi buyurtma bo'lsa (masalan zaxira), har biriga
-  // Uzum confirm so'rovi bo'lgani uchun run cho'zilmasin — qolgani keyingi
-  // tsiklda davom etadi.
-  const runDeadline = Date.now() + (config.cancelSync?.run?.maxDurationMs || 60000);
-
   for (let i = 1; i < orders.length; i++) {
-    if (Date.now() > runDeadline) {
-      logger.info("Tasdiqlash/holat o'rnatish uchun vaqt byudjeti tugadi — qolgani keyingi tsiklda.");
-      break;
-    }
-
     const row = orders[i];
     const orderId = row[ORD.orderId];
     const sentToMoySklad = row[ORD.status];
