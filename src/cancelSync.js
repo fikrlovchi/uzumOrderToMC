@@ -1,3 +1,5 @@
+const fs = require("fs");
+const path = require("path");
 const config = require("../config.json");
 const logger = require("./logger");
 const { colLetterToIndex, parseSheetTimeToEpochMs } = require("./sheetsUtil");
@@ -49,6 +51,27 @@ function cell(value) {
 const MIN_SANE_MS = Date.UTC(2020, 0, 1);
 function saneArrival(ms) {
   return ms != null && ms >= MIN_SANE_MS ? ms : null;
+}
+
+// Round-robin kursor: tekshirilgan buyurtmalar soni bir tsikl byudjetidan ko'p
+// bo'lsa (masalan 269 > 46), har tsiklda yuqoridan boshlanmasin — oxirgi
+// to'xtagan buyurtmadan davom etsin. Shunda barcha buyurtmalar bir necha
+// tsiklda navbat bilan to'liq tekshiriladi.
+const CURSOR_FILE = path.join(__dirname, "..", "data", "cancelCursor.json");
+function loadCursorId() {
+  try {
+    return JSON.parse(fs.readFileSync(CURSOR_FILE, "utf8")).lastOrderId || null;
+  } catch {
+    return null;
+  }
+}
+function saveCursorId(lastOrderId) {
+  try {
+    fs.mkdirSync(path.dirname(CURSOR_FILE), { recursive: true });
+    fs.writeFileSync(CURSOR_FILE, JSON.stringify({ lastOrderId: String(lastOrderId || "") }));
+  } catch (e) {
+    logger.error(`Bekor kursorini saqlashda xato: ${e.message}`);
+  }
 }
 
 function escapeHtml(value) {
@@ -108,17 +131,36 @@ async function run({ sheets, orders }) {
   const now = Date.now();
   const runDeadline = now + (config.cancelSync?.run?.maxDurationMs || 60000);
 
-  for (let i = 1; i < orders.length; i++) {
+  const n = orders.length - 1; // ma'lumot qatorlari (1..n)
+  // Oxirgi tekshirilgan buyurtmadan keyin boshlaymiz (round-robin) — shunda
+  // buyurtmalar soni bir tsikl byudjetidan ko'p bo'lsa ham hammasi navbat
+  // bilan qamraladi, pastdagi yangi buyurtmalar tashlab ketilmaydi.
+  const cursorId = loadCursorId();
+  let startOffset = 0;
+  if (cursorId) {
+    for (let k = 1; k <= n; k++) {
+      if (String(orders[k][ORD.orderId]) === String(cursorId)) {
+        startOffset = k;
+        break;
+      }
+    }
+  }
+  let lastExaminedId = cursorId;
+
+  for (let step = 0; step < n; step++) {
     if (Date.now() > runDeadline) {
       logger.info("Bekor qilish tekshiruvi uchun vaqt byudjeti tugadi — qolgani keyingi tsiklda.");
       break;
     }
 
+    const i = ((startOffset + step) % n) + 1; // kursordan keyin, aylanma tartib
     const row = orders[i];
     const orderId = row[ORD.orderId];
     const sentToMoySklad = row[ORD.status];
     const cancelHandled = row[ORD.cancelHandled];
-    if (!orderId || sentToMoySklad != 1 || cancelHandled == 1) continue;
+    if (!orderId) continue;
+    lastExaminedId = orderId; // kursor har bir ko'rilgan qatordan keyin suriladi
+    if (sentToMoySklad != 1 || cancelHandled == 1) continue;
     // Hali oyna ichida ushlab turilgan buyurtmalar 11:01 promotion tomonidan
     // tekshiriladi (3-band) — bu yerda tegmaymiz.
     if (row[ORD.mcState] === "hold") continue;
@@ -173,6 +215,9 @@ async function run({ sheets, orders }) {
 
     await sleep(REQUEST_DELAY_MS);
   }
+
+  // Keyingi tsikl shu joydan davom etsin.
+  saveCursorId(lastExaminedId);
 
   if (rowUpdates.length > 0) {
     await sheets.spreadsheets.values.batchUpdate({
