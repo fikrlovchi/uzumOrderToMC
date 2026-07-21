@@ -5,7 +5,7 @@ const logger = require("./logger");
 const { colLetterToIndex, parseSheetTimeToEpochMs } = require("./sheetsUtil");
 const { getOrderStatus } = require("./uzumApi");
 const { parseCabinets, buildShopTokenMap } = require("./uzumCabinets");
-const { sendTelegramMessage } = require("./telegram");
+const { notifyCancellation } = require("./cancelNotify");
 const { isDryRun } = require("./dryRun");
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -74,36 +74,6 @@ function saveCursorId(lastOrderId) {
   }
 }
 
-function escapeHtml(value) {
-  return String(value).replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[ch]));
-}
-
-// CANCEL_NOTIFY_CONTACTS="Ismi:chatId,Ismi2:chatId2" — bir nechta odamni
-// bitta xabarda belgilash (tag qilish) imkonini beradi.
-function parseNotifyContacts() {
-  const raw = process.env.CANCEL_NOTIFY_CONTACTS || "";
-  return raw
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .map((entry) => {
-      const [name, chatId] = entry.split(":").map((s) => s.trim());
-      return name && chatId ? { name, chatId } : null;
-    })
-    .filter(Boolean);
-}
-
-async function notifyCancellation(orderId) {
-  const contacts = parseNotifyContacts();
-  const tags = contacts
-    .map((c) => `<a href="tg://user?id=${c.chatId}">${escapeHtml(c.name)}</a>`)
-    .join(" ");
-  await sendTelegramMessage({
-    text: `❌ Buyurtma bekor qilindi: ${escapeHtml(orderId)}${tags ? "\n" + tags : ""}`,
-    parseMode: "HTML",
-  });
-}
-
 function cellUpdate(sheetName, columnKey, rowIndex, value) {
   const columnLetter = config.columns.orders[columnKey];
   return { range: `${sheetName}!${columnLetter}${rowIndex + 1}`, values: [[value]] };
@@ -119,7 +89,7 @@ function cellUpdate(sheetName, columnKey, rowIndex, value) {
 //  - W 24 soat ichida bo'lsa: Uzum'dan aynan shu buyurtmaning holatini so'raydi.
 //    CANCELED bo'lsa — CANCEL_NOTIFY_CONTACTS odamlarini belgilab Telegram'ga
 //    xabar beradi va V=1 qiladi. (MoySklad holati bu yerda o'zgartirilmaydi.)
-async function run({ sheets, orders }) {
+async function run({ sheets, orders, details }) {
   const ordersSheetName = config.sheets.orders;
   const shopTokens = buildShopTokenMap(parseCabinetsSafe());
   const rowUpdates = [];
@@ -202,7 +172,7 @@ async function run({ sheets, orders }) {
         if (isDryRun()) {
           logger.info(`[DRY_RUN] Order ${orderId} Uzum'da bekor qilingan — Telegram xabari yuborilardi va V=1 qilinardi.`);
         } else {
-          await notifyCancellation(orderId);
+          await notifyCancellation({ orderId, shopId, details, header: "❌ Buyurtma bekor qilindi" });
           markCancelHandled(orders, i, ordersSheetName, rowUpdates);
           canceledCount++;
           logger.info(`Order ${orderId} Uzum'da bekor qilingan — Telegram'ga xabar berildi.`);

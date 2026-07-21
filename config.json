@@ -2,7 +2,9 @@
   "spreadsheetId": "18j8NDVJl9ZD-wuwlP3T1A1-sVoJlW_doFrwQrf-AvsE",
   "sheets": {
     "orders": "uzum_order",
-    "details": "uzum_order_detail"
+    "details": "uzum_order_detail",
+    "shops": "uzum_shop",
+    "products": "mc_product"
   },
   "columns": {
     "orders": {
@@ -28,6 +30,14 @@
       "entityType": "J",
       "quantity": "K",
       "priceIsTotal": "L"
+    },
+    "shops": {
+      "shopId": "A",
+      "name": "B"
+    },
+    "products": {
+      "ref": "B",
+      "name": "E"
     }
   },
   "moysklad": {

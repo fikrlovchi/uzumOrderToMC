@@ -249,13 +249,13 @@ async function createMoySkladOrders() {
   // Bekor qilish → oyna tugagach ko'tarish → yangi tasdiqlash+holat o'rnatish
   // tartibida: bir xil tsiklda bekor qilingan buyurtma hech qachon keyingi
   // bosqichlar tomonidan qayta "tasdiqlangan" holatga qaytarilmasin.
-  const cancelResult = await cancelSync.run({ sheets, orders });
+  const cancelResult = await cancelSync.run({ sheets, orders, details });
   errorCount += cancelResult.errorCount;
 
-  const promoteResult = await orderStatusSync.promoteHeldOrders({ sheets, orders, moyskladToken: token });
+  const promoteResult = await orderStatusSync.promoteHeldOrders({ sheets, orders, details, moyskladToken: token });
   errorCount += promoteResult.errorCount;
 
-  const confirmResult = await orderStatusSync.confirmAndSetInitialState({ sheets, orders, moyskladToken: token });
+  const confirmResult = await orderStatusSync.confirmAndSetInitialState({ sheets, orders, details, moyskladToken: token });
   errorCount += confirmResult.errorCount;
 
   return { startedAt, successCount, errorCount };

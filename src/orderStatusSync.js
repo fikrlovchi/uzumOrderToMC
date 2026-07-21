@@ -6,6 +6,7 @@ const { confirmOrder, getOrderStatus } = require("./uzumApi");
 const { parseCabinets, buildShopTokenMap } = require("./uzumCabinets");
 const moysklad = require("./moysklad");
 const { sendTelegramMessage } = require("./telegram");
+const { notifyCancellation } = require("./cancelNotify");
 const { isDryRun } = require("./dryRun");
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -67,6 +68,49 @@ async function confirmOnUzum({ orders, rowIndex, orderId, shopTokens, rowUpdates
   }
 }
 
+// confirm muvaffaqiyatsiz bo'lganda chaqiriladi: buyurtma Uzum'da tasdiqlanguncha
+// xaridor bekor qilib qo'ygan bo'lishi mumkin. Uzum statusini so'raydi:
+//  - CANCELED bo'lsa: MoySklad holatini "canceled" ("Otmenen") qiladi, V=1,
+//    mcState=done, va boy teglangan Telegram xabari yuboradi. true qaytaradi.
+//  - Aks holda (boshqa xato): false qaytaradi — keyingi tsiklda qayta uriniladi.
+async function handleConfirmFailure({ orders, rowIndex, orderId, shopTokens, moyskladToken, href, rowUpdates, ordersSheetName, details }) {
+  const row = orders[rowIndex];
+  const shopId = String(cell(row[ORD.shopId]));
+  const shopToken = shopTokens.get(shopId);
+  if (!shopToken) return false;
+
+  let uzumOrder;
+  try {
+    uzumOrder = await getOrderStatus({ shopToken, orderId });
+  } catch (e) {
+    logger.error(`Order ${orderId} confirm xatosidan keyin Uzum holatini so'rashda xato: ${e.message}`);
+    return false;
+  } finally {
+    await sleep(REQUEST_DELAY_MS);
+  }
+
+  if (!uzumOrder || uzumOrder.status !== "CANCELED") return false;
+
+  if (isDryRun()) {
+    logger.info(`[DRY_RUN] Order ${orderId} tasdiqlashdan oldin bekor bo'lgan — MoySklad "canceled" qilinardi, V=1, teglangan xabar yuborilardi.`);
+    return true;
+  }
+
+  try {
+    await moysklad.setOrderState(href, config.moyskladStates.canceledHref, moyskladToken);
+    rowUpdates.push(cellUpdate(ordersSheetName, "mcState", rowIndex, "done"));
+    rowUpdates.push(cellUpdate(ordersSheetName, "cancelHandled", rowIndex, 1));
+    row[ORD.mcState] = "done";
+    row[ORD.cancelHandled] = 1;
+    await notifyCancellation({ orderId, shopId, details, header: "⚠️ Buyurtma tasdiqlashdan oldin bekor bo'ldi" });
+    logger.info(`Order ${orderId} tasdiqlashdan oldin bekor bo'lgan — MoySklad "canceled" qilindi, xabar berildi.`);
+    return true;
+  } catch (e) {
+    logger.error(`Order ${orderId} "canceled"ga o'tkazishda xato: ${e.message}`);
+    return false;
+  }
+}
+
 // Q=1 (MoySklad'da yaratilgan), hali cancelHandled=1 bo'lmagan va mcState hali
 // "done" bo'lmagan buyurtmalar uchun:
 //  - Toshkent vaqti hold oynasida (WINDOW_HOLD_START..END) bo'lsa: Uzum'da
@@ -75,7 +119,7 @@ async function confirmOnUzum({ orders, rowIndex, orderId, shopTokens, rowUpdates
 //    "confirmed"ga o'rnatiladi (bir vaqtda).
 // Oyna ichida "hold" qilib qo'yilgan buyurtmalarni oyna tugagach Uzum'da
 // tasdiqlash + "confirmed"ga o'tkazish ishi promoteHeldOrders'da amalga oshadi.
-async function confirmAndSetInitialState({ sheets, orders, moyskladToken }) {
+async function confirmAndSetInitialState({ sheets, orders, details, moyskladToken }) {
   const ordersSheetName = config.sheets.orders;
   const shopTokens = loadShopTokens();
   const { startMin, endMin } = windowBounds();
@@ -115,7 +159,10 @@ async function confirmAndSetInitialState({ sheets, orders, moyskladToken }) {
 
     const confirmed = await confirmOnUzum({ orders, rowIndex: i, orderId, shopTokens, rowUpdates, ordersSheetName });
     if (!confirmed) {
-      errorCount++;
+      // Tasdiqlanguncha xaridor bekor qilib qo'ygan bo'lishi mumkin — statusni
+      // tekshirib, CANCELED bo'lsa MoySklad "canceled" + xabar. Aks holda xato.
+      const handled = await handleConfirmFailure({ orders, rowIndex: i, orderId, shopTokens, moyskladToken, href, rowUpdates, ordersSheetName, details });
+      if (!handled) errorCount++;
       continue;
     }
     if (isDryRun()) {
@@ -153,7 +200,7 @@ async function confirmAndSetInitialState({ sheets, orders, moyskladToken }) {
 //     (foydalanuvchilar belgilanmaydi).
 //  3. Aks holda — agar hali tasdiqlanmagan bo'lsa Uzum'da tasdiqlaydi, so'ng
 //     MoySklad holatini "confirmed"ga o'tkazadi.
-async function promoteHeldOrders({ sheets, orders, moyskladToken }) {
+async function promoteHeldOrders({ sheets, orders, details, moyskladToken }) {
   const ordersSheetName = config.sheets.orders;
   const { startMin, endMin } = windowBounds();
 
@@ -228,7 +275,10 @@ async function promoteHeldOrders({ sheets, orders, moyskladToken }) {
     if (row[ORD.uzumConfirmed] != 1) {
       const confirmed = await confirmOnUzum({ orders, rowIndex: i, orderId, shopTokens, rowUpdates, ordersSheetName });
       if (!confirmed) {
-        errorCount++;
+        // Status tekshiruvidan keyin bekor qilingan bo'lishi mumkin (poyga) —
+        // tekshirib, CANCELED bo'lsa MoySklad "canceled" + xabar.
+        const handled = await handleConfirmFailure({ orders, rowIndex: i, orderId, shopTokens, moyskladToken, href, rowUpdates, ordersSheetName, details });
+        if (!handled) errorCount++;
         continue;
       }
     }

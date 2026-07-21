@@ -11,7 +11,7 @@ const { getSheetsClient } = require("../src/oauthSheets");
 const { colLetterToIndex, parseSheetTimeToEpochMs } = require("../src/sheetsUtil");
 const { getOrderStatus } = require("../src/uzumApi");
 const { parseCabinets, buildShopTokenMap } = require("../src/uzumCabinets");
-const { sendTelegramMessage } = require("../src/telegram");
+const { notifyCancellation } = require("../src/cancelNotify");
 
 const ORD = Object.fromEntries(
   Object.entries(config.columns.orders).map(([k, v]) => [k, colLetterToIndex(v)])
@@ -27,31 +27,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function tashkentWeekday(ms) { return new Date(ms + TZ).getUTCDay(); }
 function monitorDeadline(a) { let d = a + MONITOR_WINDOW_MS; if (tashkentWeekday(d) === 0) d += DAY_MS; return d; }
 function saneArrival(ms) { return ms != null && ms >= Date.UTC(2020, 0, 1) ? ms : null; }
-function escapeHtml(v) { return String(v).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
-
-function notifyTags() {
-  return (process.env.CANCEL_NOTIFY_CONTACTS || "")
-    .split(",").map((e) => e.trim()).filter(Boolean)
-    .map((e) => { const [name, id] = e.split(":").map((s) => s.trim()); return name && id ? `<a href="tg://user?id=${id}">${escapeHtml(name)}</a>` : null; })
-    .filter(Boolean).join(" ");
-}
-
-async function notifyCancellation(orderId) {
-  const tags = notifyTags();
-  return sendTelegramMessage({
-    text: `❌ Buyurtma bekor qilindi: ${escapeHtml(orderId)}${tags ? "\n" + tags : ""}`,
-    parseMode: "HTML",
-  });
-}
 
 (async () => {
   const sheets = getSheetsClient();
-  const { data } = await sheets.spreadsheets.values.get({
+  const { data } = await sheets.spreadsheets.values.batchGet({
     spreadsheetId: config.spreadsheetId,
-    range: ordersSheetName,
+    ranges: [config.sheets.orders, config.sheets.details],
     valueRenderOption: "UNFORMATTED_VALUE",
   });
-  const rows = data.values || [];
+  const rows = data.valueRanges[0].values || [];
+  const details = data.valueRanges[1].values || [];
+
   const shopTokens = buildShopTokenMap(parseCabinets(process.env));
   const now = Date.now();
   const updates = [];
@@ -78,7 +64,7 @@ async function notifyCancellation(orderId) {
     try {
       const o = await getOrderStatus({ shopToken, orderId });
       if (o && o.status === "CANCELED") {
-        await notifyCancellation(orderId);
+        await notifyCancellation({ orderId, shopId, details, header: "❌ Buyurtma bekor qilindi" });
         updates.push({ range: `${ordersSheetName}!${cancelHandledCol}${i + 1}`, values: [[1]] });
         canceled++;
         console.log(`  ❌ ${orderId} bekor — xabar berildi, V=1`);
