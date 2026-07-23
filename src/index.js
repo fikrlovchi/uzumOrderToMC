@@ -64,17 +64,23 @@ function buildPositions(details, orderId) {
     const prodHref = toHref(row[DET.product], entityType);
 
     // uzum_order_detail!L (priceIsTotal):
-    //  - TRUE  → E = qator UMUMIY summasi; miqdor = K. MoySklad'da alohida
+    //  - TRUE  → qator UMUMIY summasi = E × F; miqdor = K. MoySklad'da alohida
     //    "summa" maydoni yo'q (summani narx×miqdor deb o'zi hisoblaydi),
-    //    shuning uchun birlik narxni E/K qilib yuboramiz → (E/K)×K = E.
+    //    shuning uchun birlik narxni (E×F)/K qilib yuboramiz → ((E×F)/K)×K = E×F.
     //  - FALSE → E = BIRLIK narxi; miqdor = K → MoySklad summani E×K deb
     //    hisoblaydi.
     const priceIsTotal = row[DET.priceIsTotal] === true || row[DET.priceIsTotal] === "TRUE";
     let quantity = parseFloat(row[DET.quantity]);
     if (!Number.isFinite(quantity) || quantity <= 0) quantity = 1;
-    const unitPrice = priceIsTotal
-      ? parseFloat(row[DET.price]) / quantity
-      : parseFloat(row[DET.price]);
+    const price = parseFloat(row[DET.price]);
+    const amount = parseFloat(row[DET.amount]);
+    let unitPrice;
+    if (priceIsTotal) {
+      const lineTotal = price * (Number.isFinite(amount) && amount > 0 ? amount : 1);
+      unitPrice = lineTotal / quantity;
+    } else {
+      unitPrice = price;
+    }
 
     positions.push({
       quantity,

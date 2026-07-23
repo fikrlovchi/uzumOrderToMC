@@ -25,6 +25,7 @@
     },
     "details": {
       "price": "E",
+      "amount": "F",
       "orderId": "H",
       "product": "I",
       "entityType": "J",
